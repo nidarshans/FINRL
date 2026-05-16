@@ -1,17 +1,42 @@
 import pandas as pd
 import bt
-from lib.regime_detection.src.constants import REBAL_FREQ, TOP_N, BULL_THRESH, BEAR_EXIT_PROB, DIVERGENCE_MULT
+from lib.regime_detection.src.constants import (
+    REBAL_FREQ, TOP_N, BULL_THRESH, BEAR_EXIT_PROB, DIVERGENCE_MULT,
+    CORR_METRIC, CORR_WINDOW,
+)
 from lib.regime_detection.src.features.signals import build_signals, detect_divergence
+from lib.regime_detection.src.features.correlation import (
+    compute_metric, build_corr_matrix, run_pca_on_corr, inject_pca_features,
+)
 from lib.regime_detection.src.models.registry import train_model, decode_model
 
-def train_all_sectors(train_data):
+
+def _run_pca_pipeline(data_dict, metric=CORR_METRIC):
+    """Cross-sector PCA pipeline: metric → corr → eigenvalues → inject."""
+    print("\n--- Cross-sector PCA feature extraction ---")
+    metric_df = compute_metric(data_dict, metric=metric)
+    corr_dict = build_corr_matrix(metric_df, window=CORR_WINDOW)
+    eigenvalues_df, _, _ = run_pca_on_corr(corr_dict)
+    return eigenvalues_df
+
+
+def train_all_sectors(train_data, metric=CORR_METRIC):
     print("\n=== TRAINING PHASE ===")
+
+    # Step 1: Cross-sector PCA features
+    eigenvalues_df = _run_pca_pipeline(train_data, metric=metric)
+    train_data = inject_pca_features(train_data, eigenvalues_df)
+
+    # Step 2: Per-sector signal building + HMM training
     trained = {}
     for ticker, df_raw in train_data.items():
         print(f"  Training {ticker}...", end=" ")
-        # Using build_signals here to get features for training
         from lib.regime_detection.src.constants import FEATURES
         df, _ = build_signals(df_raw)
+        # Ensure eigenvalue columns survive build_signals (they were added to df_raw)
+        for col in ['Eigenvalue_1', 'Eigenvalue_2']:
+            if col in df_raw.columns and col not in df.columns:
+                df[col] = df_raw[col]
         features = df[FEATURES].dropna()
         model, state_map, _, scaler = train_model(features)
         if model is None:
@@ -24,15 +49,31 @@ def train_all_sectors(train_data):
     return trained
 
 
-def decode_test_sectors(test_data, trained):
+def decode_test_sectors(test_data, trained, metric=CORR_METRIC):
     print("\n=== DECODING TEST PERIOD ===")
+
+    # Step 1: Cross-sector PCA features for test data
+    eigenvalues_df = _run_pca_pipeline(test_data, metric=metric)
+    test_data = inject_pca_features(test_data, eigenvalues_df)
+
+    # Step 2: Per-sector signal building + HMM decoding
     decoded_all = {}
     for ticker, (_, model, state_map, scaler) in trained.items():
         if ticker not in test_data:
             print(f"  {ticker}: no test data, skipping.")
             continue
         df_test = test_data[ticker].copy()
+        # Preserve eigenvalue columns before build_signals
+        eig_backup = {}
+        for col in ['Eigenvalue_1', 'Eigenvalue_2']:
+            if col in df_test.columns:
+                eig_backup[col] = df_test[col].copy()
+
         df_test, avg_vol = build_signals(df_test)
+
+        # Restore eigenvalue columns
+        for col, series in eig_backup.items():
+            df_test[col] = series
 
         # Generic decode call
         decoded = decode_model(model, state_map, df_test, scaler)

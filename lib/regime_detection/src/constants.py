@@ -45,6 +45,14 @@ KVO_FAST_SPAN   = 34
 KVO_SLOW_SPAN   = 55
 HMM_ITER        = 150
 
+# ── Correlation / PCA Regime Detection ────────────────────────────────────────
+CORR_METRIC        = "garch_returns"   # Options: "garch_returns" | "kvo_pct" | "raw_returns"
+CORR_WINDOW        = 21               # Rolling window in trading days
+GARCH_P            = 1                # GARCH(p,q) order
+GARCH_Q            = 1
+PCA_N_COMPONENTS   = None             # None = keep all; int = keep top-N
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Walk-forward backtest parameters
 REBAL_FREQ      = 5        # Rebalance every N trading days
 TOP_N           = 1        # Sectors held at a time
@@ -55,7 +63,7 @@ BEAR_EXIT_PROB  = 0.25     # Immediate exit if P(Bear) exceeds this
 DIVERGENCE_MULT    = 0.5
 DIVERGENCE_LOOKBACK = 20
 
-FEATURES = ['KVO', 'Innovation_Z', 'MACD']
+FEATURES = ['KVO', 'Innovation_Z', 'MACD', 'Eigenvalue_1', 'Eigenvalue_2']
 
 REGIME_COLORS = {'Bull': '#4CAF50', 'Stagnant': '#FFC107', 'Bear': '#F44336'}
 SECTOR_COLORS = [
