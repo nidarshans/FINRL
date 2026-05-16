@@ -1,5 +1,4 @@
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
@@ -71,8 +70,7 @@ def plot_results(result, weights_aligned, decoded_all, close_prices, output_path
             ax5.barh(y, (pd.Timestamp(oos_e) - pd.Timestamp(oos_s)).days, left=matplotlib.dates.date2num(pd.Timestamp(oos_s)), color='#00e5ff', height=0.35)
         ax5.xaxis_date()
 
-    plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
-    plt.close()
+    plt.show()
 
 
 def print_stats(result):
