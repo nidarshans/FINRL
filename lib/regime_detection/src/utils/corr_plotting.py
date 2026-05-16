@@ -8,7 +8,20 @@ overlay plots to diagnose regime change signals.
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Auto-detect Colab and set renderer
+try:
+    import google.colab  # noqa: F401
+    pio.renderers.default = "colab"
+except ImportError:
+    pass
+
+# Set Matplotlib style for consistency
+plt.style.use('dark_background')
 
 
 def plot_corr_heatmap(corr_matrix: np.ndarray, date, sectors: list) -> go.Figure:
@@ -219,3 +232,67 @@ def plot_corr_regime_overlay(
     fig.update_yaxes(title_text="Price", secondary_y=False)
     fig.update_yaxes(title_text="Eigenvalue λ₁", secondary_y=True)
     return fig
+
+
+# ==============================================================================
+# Matplotlib Fallbacks (More reliable in Colab)
+# ==============================================================================
+
+def plot_eigenvalue_evolution_plt(eigenvalues_df: pd.DataFrame, top_n: int = 3):
+    """Matplotlib version of eigenvalue evolution."""
+    plt.figure(figsize=(12, 5))
+    cols = [c for c in eigenvalues_df.columns if c.startswith("Eigenvalue_")][:top_n]
+    for col in cols:
+        plt.plot(eigenvalues_df.index, eigenvalues_df[col], label=col)
+    plt.title("Eigenvalue Evolution (Matplotlib)")
+    plt.xlabel("Date")
+    plt.ylabel("Value")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.show()
+
+def plot_pc1_loadings_plt(pc1_loadings_df: pd.DataFrame, sectors: list, n_dates: int = 4):
+    """Matplotlib version of PC1 loadings snapshots."""
+    dates = pc1_loadings_df.index
+    step = max(len(dates) // n_dates, 1)
+    snapshot_dates = [dates[i] for i in range(0, len(dates), step)][:n_dates]
+    
+    fig, axes = plt.subplots(1, len(snapshot_dates), figsize=(4*len(snapshot_dates), 4), sharey=True)
+    if len(snapshot_dates) == 1: axes = [axes]
+    
+    labels = sectors[: pc1_loadings_df.shape[1]]
+    for i, date in enumerate(snapshot_dates):
+        axes[i].bar(labels, pc1_loadings_df.loc[date])
+        axes[i].set_title(str(date.date()) if hasattr(date, "date") else str(date))
+        axes[i].tick_params(axis='x', rotation=45)
+    
+    plt.suptitle("PC1 Sector Loadings snapshots")
+    plt.tight_layout()
+    plt.show()
+
+def plot_corr_heatmap_plt(corr_matrix: np.ndarray, date, sectors: list):
+    """Matplotlib version of correlation heatmap."""
+    plt.figure(figsize=(8, 6))
+    labels = sectors[: corr_matrix.shape[0]]
+    sns.heatmap(corr_matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
+    plt.title(f"Correlation Matrix — {date}")
+    plt.show()
+
+def plot_corr_regime_overlay_plt(eigenvalues_df: pd.DataFrame, price_df: pd.DataFrame, sector: str):
+    """Matplotlib version of regime overlay."""
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+    
+    if sector in price_df.columns:
+        ax1.plot(price_df.index, price_df[sector], color='#4ECDC4', label=f"{sector} Price")
+        ax1.set_ylabel("Price", color='#4ECDC4')
+        ax1.tick_params(axis='y', labelcolor='#4ECDC4')
+    
+    if "Eigenvalue_1" in eigenvalues_df.columns:
+        ax2 = ax1.twinx()
+        ax2.fill_between(eigenvalues_df.index, 0, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', alpha=0.2, label="λ₁")
+        ax2.plot(eigenvalues_df.index, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', label="λ₁")
+        ax2.set_ylabel("Eigenvalue λ₁", color='#FF6B6B')
+        ax2.tick_params(axis='y', labelcolor='#FF6B6B')
+    
+    plt.title(f"Regime Overlay — {sector} vs λ₁")
+    plt.show()
