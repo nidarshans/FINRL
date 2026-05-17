@@ -16,6 +16,8 @@ from lib.regime_detection.src.constants import (
     CORR_METRIC, CORR_WINDOW, GARCH_P, GARCH_Q, PCA_N_COMPONENTS,
 )
 
+from lib.regime_detection.src.filters.garch import fit_garch_all, fit_garch
+
 
 # ==============================================================================
 # 1. Metric Computation
@@ -30,7 +32,7 @@ def compute_metric(data_dict: dict, metric: str = CORR_METRIC) -> pd.DataFrame:
     data_dict : dict[str, pd.DataFrame]
         Mapping of ticker → OHLCV DataFrame.
     metric : str
-        One of "garch_returns", "kvo_pct", "raw_returns".
+        One of "garch_returns", "volume" (GARCH-filtered percent change), "raw_returns".
 
     Returns
     -------
@@ -39,35 +41,36 @@ def compute_metric(data_dict: dict, metric: str = CORR_METRIC) -> pd.DataFrame:
     """
     if metric == "garch_returns":
         return _metric_garch(data_dict)
-    elif metric == "kvo_pct":
-        return _metric_kvo_pct(data_dict)
+    elif metric == "volume":
+        return _metric_volume(data_dict)
     elif metric == "raw_returns":
         return _metric_raw_returns(data_dict)
     else:
         raise ValueError(
             f"Unknown metric '{metric}'. "
-            f"Choose from: 'garch_returns', 'kvo_pct', 'raw_returns'"
+            f"Choose from: 'garch_returns', 'volume', 'raw_returns'"
         )
 
 
 def _metric_garch(data_dict: dict) -> pd.DataFrame:
     """GARCH-adjusted standardized residuals across all sectors."""
-    from lib.regime_detection.src.features.garch import fit_garch_all
     return fit_garch_all(data_dict, p=GARCH_P, q=GARCH_Q)
 
 
-def _metric_kvo_pct(data_dict: dict) -> pd.DataFrame:
-    """KVO oscillator percent change across all sectors."""
-    from lib.regime_detection.src.features.signals import build_signals
-
-    kvo_series = {}
+def _metric_volume(data_dict: dict) -> pd.DataFrame:
+    """GARCH-filtered volume percent change across all sectors."""
+    volume_series = {}
     for ticker, df in data_dict.items():
-        df_sig, _ = build_signals(df)
-        if "KVO" in df_sig.columns:
-            kvo_pct = df_sig["KVO"].pct_change().replace([np.inf, -np.inf], np.nan)
-            kvo_series[ticker] = kvo_pct
+        if "Volume" in df.columns:
+            # 1. Compute volume percent change
+            # Replace inf/-inf with nan to avoid numerical issues
+            vol_pct = df["Volume"].pct_change().replace([np.inf, -np.inf], np.nan)
+            
+            # 2. Apply GARCH filter to the volume series
+            vol_garch = fit_garch(vol_pct, p=GARCH_P, q=GARCH_Q)
+            volume_series[ticker] = vol_garch
 
-    metric_df = pd.DataFrame(kvo_series)
+    metric_df = pd.DataFrame(volume_series)
     return metric_df.dropna(how="all")
 
 
@@ -100,8 +103,8 @@ def build_corr_matrix(
 
     Returns
     -------
-    dict[pd.Timestamp, np.ndarray]
-        Mapping of date → (n_sectors × n_sectors) correlation matrix.
+    dict[pd.Timestamp, tuple(np.ndarray, list)]
+        Mapping of date → (corr_matrix, valid_columns).
         Only dates with a full window of data are included.
     """
     corr_dict = {}
@@ -126,19 +129,11 @@ def build_corr_matrix(
             corr = np.nan_to_num(corr, nan=0.0)
             np.fill_diagonal(corr, 1.0)
 
-        # If not all columns were valid, embed into full-size matrix
-        if len(valid_cols) < n_cols:
-            full_corr = np.eye(n_cols)
-            valid_idx = [metric_df.columns.get_loc(c) for c in valid_cols]
-            for ii, vi in enumerate(valid_idx):
-                for jj, vj in enumerate(valid_idx):
-                    full_corr[vi, vj] = corr[ii, jj]
-            corr_dict[date] = full_corr
-        else:
-            corr_dict[date] = corr
+        # Store the minimal correlation matrix and the list of valid columns
+        corr_dict[date] = (corr, valid_cols.tolist())
 
     print(f"  [CORR] Built {len(corr_dict)} rolling correlation matrices "
-          f"(window={window}, sectors={n_cols})")
+          f"(window={window})")
     return corr_dict
 
 
@@ -171,14 +166,23 @@ def run_pca_on_corr(
         Index = dates, columns = sector names. PC1 loadings over time.
     explained_variance_df : pd.DataFrame
         Index = dates, columns = ['PC_1_var', ..., 'PC_K_var'].
-        Fraction of variance explained by each component.
+        Fraction of variance explained by each component relative to available sectors.
     """
     if not corr_dict:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     dates = sorted(corr_dict.keys())
-    sample_matrix = corr_dict[dates[0]]
-    n_sectors = sample_matrix.shape[0]
+    # Use provided sectors or infer from metadata in corr_dict
+    if sectors is None:
+        # Fallback: union of all valid_cols seen across all dates
+        all_seen = set()
+        for _, cols in corr_dict.values():
+            all_seen.update(cols)
+        all_sectors = sorted(list(all_seen))
+    else:
+        all_sectors = sectors
+
+    n_sectors = len(all_sectors)
     k = n_components if n_components is not None else n_sectors
 
     eigenvalue_rows = []
@@ -186,41 +190,47 @@ def run_pca_on_corr(
     explained_rows = []
 
     for date in dates:
-        corr = corr_dict[date]
-
-        # Eigendecomposition (correlation matrix is symmetric → use eigh)
+        corr, valid_cols = corr_dict[date]
+        n_valid = len(valid_cols)
+        
+        # Eigendecomposition
         eigenvalues, eigenvectors = np.linalg.eigh(corr)
 
-        # eigh returns in ascending order; reverse to descending
+        # Reverse to descending order
         idx = np.argsort(eigenvalues)[::-1]
         eigenvalues = eigenvalues[idx]
         eigenvectors = eigenvectors[:, idx]
 
-        # Clamp negative eigenvalues (numerical noise) to zero
+        # Clamp negative eigenvalues
         eigenvalues = np.maximum(eigenvalues, 0.0)
 
-        # Top-k eigenvalues
-        top_eigenvalues = eigenvalues[:k]
+        # Top-k eigenvalues for this date
+        current_k = min(k, n_valid)
+        top_eigenvalues = np.zeros(k)
+        top_eigenvalues[:current_k] = eigenvalues[:current_k]
         eigenvalue_rows.append(top_eigenvalues)
 
-        # PC1 loadings (first eigenvector)
-        pc1_loading_rows.append(eigenvectors[:, 0])
+        # PC1 loadings (padded to full n_sectors size)
+        full_pc1 = np.zeros(n_sectors)
+        if n_valid > 0:
+            # Map valid loadings back to their original sector indices
+            valid_idx = [all_sectors.index(c) for c in valid_cols]
+            for i, vi in enumerate(valid_idx):
+                full_pc1[vi] = eigenvectors[i, 0]
+        pc1_loading_rows.append(full_pc1)
 
-        # Explained variance ratio
+        # Explained variance ratio (relative to n_valid)
         total = eigenvalues.sum()
+        explained = np.zeros(k)
         if total > 0:
-            explained = eigenvalues[:k] / total
-        else:
-            explained = np.zeros(k)
+            explained[:current_k] = eigenvalues[:current_k] / total
         explained_rows.append(explained)
 
     # Build DataFrames
     eig_cols = [f"Eigenvalue_{i+1}" for i in range(k)]
     eigenvalues_df = pd.DataFrame(eigenvalue_rows, index=dates, columns=eig_cols)
 
-    sector_labels = sectors if sectors is not None else [f"Sector_{i}" for i in range(n_sectors)]
-    # Trim labels if there are more sectors than matrix dimensions
-    sector_labels = sector_labels[:n_sectors]
+    sector_labels = all_sectors
     pc1_loadings_df = pd.DataFrame(pc1_loading_rows, index=dates, columns=sector_labels)
 
     var_cols = [f"PC_{i+1}_var" for i in range(k)]

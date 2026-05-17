@@ -23,9 +23,9 @@ def fit_garch(returns_series: pd.Series, p: int = GARCH_P, q: int = GARCH_Q) -> 
     returns_series : pd.Series
         Daily arithmetic returns (e.g. Close.pct_change()).
     p : int
-        GARCH lag order for the variance equation.
-    q : int
         ARCH lag order for the variance equation.
+    q : int
+        GARCH lag order for the variance equation.
 
     Returns
     -------
@@ -36,9 +36,9 @@ def fit_garch(returns_series: pd.Series, p: int = GARCH_P, q: int = GARCH_Q) -> 
     clean = returns_series.dropna()
     if len(clean) < 30:
         return pd.Series(np.nan, index=returns_series.index, name=returns_series.name)
-
-    # arch expects returns scaled by 100 for numerical stability
-    scaled = clean * 100.0
+    
+    scale_factor = 100
+    scaled = clean * scale_factor
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

@@ -13,35 +13,20 @@ from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Auto-detect Colab and set renderer
-try:
-    import google.colab  # noqa: F401
-    pio.renderers.default = "colab"
-except ImportError:
-    pass
 
 # Set Matplotlib style for consistency
 plt.style.use('dark_background')
 
 
-def plot_corr_heatmap(corr_matrix: np.ndarray, date, sectors: list) -> go.Figure:
+def plot_corr_heatmap(corr_data, date, sectors: list) -> go.Figure:
     """
     Heatmap of the correlation matrix at a specific date.
-
-    Parameters
-    ----------
-    corr_matrix : np.ndarray
-        (n_sectors × n_sectors) correlation matrix.
-    date : str or pd.Timestamp
-        Date label for the title.
-    sectors : list[str]
-        Sector ticker labels.
-
-    Returns
-    -------
-    go.Figure
     """
-    labels = sectors[: corr_matrix.shape[0]]
+    if isinstance(corr_data, tuple):
+        corr_matrix, labels = corr_data
+    else:
+        corr_matrix = corr_data
+        labels = sectors[: corr_matrix.shape[0]]
 
     fig = go.Figure(
         data=go.Heatmap(
@@ -270,10 +255,15 @@ def plot_pc1_loadings_plt(pc1_loadings_df: pd.DataFrame, sectors: list, n_dates:
     plt.tight_layout()
     plt.show()
 
-def plot_corr_heatmap_plt(corr_matrix: np.ndarray, date, sectors: list):
+def plot_corr_heatmap_plt(corr_data, date, sectors: list):
     """Matplotlib version of correlation heatmap."""
+    if isinstance(corr_data, tuple):
+        corr_matrix, labels = corr_data
+    else:
+        corr_matrix = corr_data
+        labels = sectors[: corr_matrix.shape[0]]
+
     plt.figure(figsize=(8, 6))
-    labels = sectors[: corr_matrix.shape[0]]
     sns.heatmap(corr_matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
     plt.title(f"Correlation Matrix — {date}")
     plt.show()
@@ -295,4 +285,30 @@ def plot_corr_regime_overlay_plt(eigenvalues_df: pd.DataFrame, price_df: pd.Data
         ax2.tick_params(axis='y', labelcolor='#FF6B6B')
     
     plt.title(f"Regime Overlay — {sector} vs λ₁")
+    plt.show()
+
+def plot_absorption_ratio_plt(explained_variance_df: pd.DataFrame, k: int = 1):
+    """Matplotlib version of Absorption Ratio plot (Cumulative)."""
+    if explained_variance_df.empty:
+        print("Explained variance DataFrame is empty.")
+        return
+        
+    plt.figure(figsize=(12, 5))
+    colors = ["#FF6B6B", "#4ECDC4", "#FFD93D", "#45B7D1", "#96CEB4"]
+    
+    for i in range(1, k + 1):
+        ar_series = explained_variance_df.iloc[:, :i].sum(axis=1)
+        plt.plot(ar_series.index, ar_series, 
+                 label=f"AR (k={i})", 
+                 color=colors[(i-1) % len(colors)],
+                 linewidth=2 if i == k else 1.5,
+                 alpha=1.0 if i == k else 0.6)
+                 
+    plt.fill_between(ar_series.index, 0, ar_series, color=colors[(k-1) % len(colors)], alpha=0.05)
+    plt.title(f"Cumulative Absorption Ratio Evolution (Top {k} Components)")
+    plt.xlabel("Date")
+    plt.ylabel("Fraction of Total Variance")
+    plt.ylim(0, 1.1)
+    plt.grid(alpha=0.2)
+    plt.legend()
     plt.show()

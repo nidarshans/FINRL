@@ -40,13 +40,13 @@ WF_MIN_TRAIN_DAYS   = 0   # Minimum bars required before first OOS step
 R_BASE          = 0.1
 Q_NOISE         = 0.001
 GAMMA           = 2.0
-VOL_WINDOW      = 20
+VOL_WINDOW      = 5
 KVO_FAST_SPAN   = 34
 KVO_SLOW_SPAN   = 55
 HMM_ITER        = 150
 
 # ── Correlation / PCA Regime Detection ────────────────────────────────────────
-CORR_METRIC        = "garch_returns"   # Options: "garch_returns" | "kvo_pct" | "raw_returns"
+CORR_METRIC        = "garch_returns"   # Options: "garch_returns" | "volume" | "raw_returns"
 CORR_WINDOW        = 21               # Rolling window in trading days
 GARCH_P            = 1                # GARCH(p,q) order
 GARCH_Q            = 1
