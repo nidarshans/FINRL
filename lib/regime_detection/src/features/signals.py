@@ -1,6 +1,9 @@
 import pandas as pd
 import pandas_ta as ta
-from lib.regime_detection.src.constants import VOL_WINDOW, KVO_FAST_SPAN, KVO_SLOW_SPAN, DIVERGENCE_LOOKBACK
+from lib.regime_detection.src.constants import (
+    VOL_WINDOW, KVO_FAST_SPAN, KVO_SLOW_SPAN, DIVERGENCE_LOOKBACK,
+    CORR_COLS, SIGNAL_COLS
+)
 from lib.regime_detection.src.filters.kalman import apply_kalman_to_vf
 
 def build_signals(df, corr_features_df=None):
@@ -13,16 +16,19 @@ def build_signals(df, corr_features_df=None):
         df['High'], df['Low'], df['Close'], df['Volume'],
         fast=KVO_FAST_SPAN, slow=KVO_SLOW_SPAN, signal=13
     )
-    macd_df  = df.ta.macd(fast=12, slow=26, signal=9, append=False)
+    # Silence pandas_ta print bug (Issue #388 where it prints to stdout when append=False)
+    import io
+    from contextlib import redirect_stdout
+    with redirect_stdout(io.StringIO()):
+        macd_df  = df.ta.macd(fast=12, slow=26, signal=9, append=False)
+        
     raw_macd = macd_df.iloc[:, 1]
 
-    corr_cols = ['Eigenvalue_1', 'Eigenvalue_2', 'Absorption_Ratio', 'Corr_Mean', 'Corr_Dispersion', 'Eigenvalue_1_Delta']
-
     if kvo_df is None or kvo_df.empty:
-        for col in ['VF','Filtered_VF','Innovation_Z','KVO_Fast','KVO_Slow','KVO','MACD']:
+        for col in SIGNAL_COLS:
             df[col] = 0.0
         if corr_features_df is not None:
-            for col in corr_cols:
+            for col in CORR_COLS:
                 df[col] = 0.0
         return df, avg_vol
 
@@ -40,7 +46,7 @@ def build_signals(df, corr_features_df=None):
 
     if corr_features_df is not None:
         aligned = corr_features_df.reindex(df.index).ffill().bfill()
-        for col in corr_cols:
+        for col in CORR_COLS:
             if col in aligned.columns:
                 df[col] = aligned[col]
             else:

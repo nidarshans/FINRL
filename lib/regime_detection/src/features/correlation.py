@@ -132,8 +132,10 @@ def build_corr_matrix(
         # Store the minimal correlation matrix and the list of valid columns
         corr_dict[date] = (corr, valid_cols.tolist())
 
-    print(f"  [CORR] Built {len(corr_dict)} rolling correlation matrices "
-          f"(window={window})")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print(f"  [CORR] Built {len(corr_dict)} rolling correlation matrices "
+              f"(window={window})")
     return corr_dict
 
 
@@ -236,8 +238,10 @@ def run_pca_on_corr(
     var_cols = [f"PC_{i+1}_var" for i in range(k)]
     explained_variance_df = pd.DataFrame(explained_rows, index=dates, columns=var_cols)
 
-    print(f"  [PCA] Computed eigenvalues for {len(dates)} dates, "
-          f"retaining {k} components")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print(f"  [PCA] Computed eigenvalues for {len(dates)} dates, "
+              f"retaining {k} components")
     return eigenvalues_df, pc1_loadings_df, explained_variance_df
 
 
@@ -279,8 +283,9 @@ def inject_pca_features(
             df[col] = aligned[col]
         result[ticker] = df
 
-    injected_count = sum(1 for df in result.values() if "Eigenvalue_1" in df.columns)
-    print(f"  [INJECT] Added {eig_cols} to {injected_count}/{len(data_dict)} sectors")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print(f"  [INJECT] Added {eig_cols} to {len(result)}/{len(data_dict)} sectors")
     return result
 
 
@@ -321,6 +326,11 @@ def compute_corr_features(
     else:
         out_df['Eigenvalue_2'] = 0.0
     out_df['Absorption_Ratio'] = explained_variance_df['PC_1_var']
+    
+    from lib.regime_detection.src.filters.garch import fit_garch
+    ar_returns = out_df['Absorption_Ratio'].pct_change()
+    out_df['Absorption_Ratio_Garch'] = fit_garch(ar_returns)
+    
     out_df['Corr_Mean'] = corr_means
     out_df['Corr_Dispersion'] = corr_disps
     out_df['Eigenvalue_1_Delta'] = eigenvalues_df['Eigenvalue_1'].diff(periods=CORR_DELTA_WINDOW)

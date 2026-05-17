@@ -346,22 +346,31 @@ def plot_corr_hmm_overlay(
     price_sub = price_df.loc[common_idx]
     
     fig = make_subplots(
-        rows=3, cols=1,
+        rows=4, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.05,
+        vertical_spacing=0.04,
         subplot_titles=(
             f"{sector} Price & HMM Predicted Regimes",
             "Systemic Risk: Absorption Ratio & Average Sector Correlation",
+            "GARCH-Adjusted Absorption Ratio Shocks",
             "Correlation Acceleration (λ₁ Delta)"
         ),
-        row_heights=[0.5, 0.25, 0.25]
+        row_heights=[0.35, 0.2, 0.2, 0.25]
     )
     
+    # Extract price series robustly (handles both panel format and single-sector format dataframes)
+    if sector in price_sub.columns:
+        price_series = price_sub[sector]
+    elif 'Close' in price_sub.columns:
+        price_series = price_sub['Close']
+    else:
+        price_series = price_sub.iloc[:, 0]
+
     # 1. Top Panel: Price + Regime Bands
     fig.add_trace(
         go.Scatter(
             x=common_idx,
-            y=price_sub[sector],
+            y=price_series,
             mode="lines",
             name=f"{sector} Price",
             line=dict(color="#FFFFFF", width=2),
@@ -378,24 +387,25 @@ def plot_corr_hmm_overlay(
     while i < len(regimes):
         r = regimes[i]
         start_date = dates[i]
-        while i < len(regimes) and regimes[i] == r:
+        while i < len(regimes) and (regimes[i] == r or (pd.isnull(regimes[i]) and pd.isnull(r))):
             i += 1
         end_date = dates[min(i, len(regimes) - 1)]
         
-        color = REGIME_COLORS.get(r, '#7f7f7f')
-        shapes.append(dict(
-            type="rect",
-            xref="x",
-            yref="paper",
-            x0=start_date,
-            y0=0.0,
-            x1=end_date,
-            y1=1.0,
-            fillcolor=color,
-            opacity=0.15,
-            layer="below",
-            line_width=0,
-        ))
+        if pd.notnull(r):
+            color = REGIME_COLORS.get(r, '#7f7f7f')
+            shapes.append(dict(
+                type="rect",
+                xref="x",
+                yref="paper",
+                x0=start_date,
+                y0=0.0,
+                x1=end_date,
+                y1=1.0,
+                fillcolor=color,
+                opacity=0.15,
+                layer="below",
+                line_width=0,
+            ))
         
     for r, col in REGIME_COLORS.items():
         fig.add_trace(
@@ -433,7 +443,22 @@ def plot_corr_hmm_overlay(
         row=2, col=1
     )
     
-    # 3. Bottom Panel: Eigenvalue 1 Delta
+    # 3. Third Panel: Absorption Ratio GARCH Residuals
+    if 'Absorption_Ratio_Garch' in corr_sub.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=common_idx,
+                y=corr_sub['Absorption_Ratio_Garch'],
+                mode="lines",
+                name="AR GARCH Residuals",
+                line=dict(color="#FFD93D", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(255,217,61,0.08)"
+            ),
+            row=3, col=1
+        )
+        
+    # 4. Bottom Panel: Eigenvalue 1 Delta
     delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
     bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
     
@@ -445,7 +470,7 @@ def plot_corr_hmm_overlay(
             marker_color=bar_colors,
             opacity=0.8
         ),
-        row=3, col=1
+        row=4, col=1
     )
     
     fig.update_layout(
@@ -457,7 +482,7 @@ def plot_corr_hmm_overlay(
         ),
         template="plotly_dark",
         hovermode="x unified",
-        height=750,
+        height=850,
         width=1100,
         shapes=shapes,
         legend=dict(
@@ -472,8 +497,9 @@ def plot_corr_hmm_overlay(
     
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="Ratio / Corr", row=2, col=1)
-    fig.update_yaxes(title_text="Change", row=3, col=1)
-    fig.update_xaxes(title_text="Date", row=3, col=1)
+    fig.update_yaxes(title_text="GARCH Resid", row=3, col=1)
+    fig.update_yaxes(title_text="Change", row=4, col=1)
+    fig.update_xaxes(title_text="Date", row=4, col=1)
     
     return fig
 
@@ -496,10 +522,18 @@ def plot_corr_hmm_overlay_plt(
     hmm_sub = hmm_results_df.loc[common_idx]
     price_sub = price_df.loc[common_idx]
     
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+    # Extract price series robustly (handles both panel format and single-sector format dataframes)
+    if sector in price_sub.columns:
+        price_series = price_sub[sector]
+    elif 'Close' in price_sub.columns:
+        price_series = price_sub['Close']
+    else:
+        price_series = price_sub.iloc[:, 0]
+
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
     
     # 1. Top Panel
-    ax1.plot(common_idx, price_sub[sector], color='white', linewidth=2, label=f"{sector} Price")
+    ax1.plot(common_idx, price_series, color='white', linewidth=2, label=f"{sector} Price")
     
     # Background bands
     regimes = hmm_sub['Regime'].values
@@ -508,11 +542,12 @@ def plot_corr_hmm_overlay_plt(
     while i < len(regimes):
         r = regimes[i]
         start_date = dates[i]
-        while i < len(regimes) and regimes[i] == r:
+        while i < len(regimes) and (regimes[i] == r or (pd.isnull(regimes[i]) and pd.isnull(r))):
             i += 1
         end_date = dates[min(i, len(regimes) - 1)]
-        color = REGIME_COLORS.get(r, '#7f7f7f')
-        ax1.axvspan(start_date, end_date, color=color, alpha=0.15)
+        if pd.notnull(r):
+            color = REGIME_COLORS.get(r, '#7f7f7f')
+            ax1.axvspan(start_date, end_date, color=color, alpha=0.15)
         
     ax1.set_ylabel("Price")
     ax1.set_title(f"{sector} Price & HMM Regimes")
@@ -521,7 +556,7 @@ def plot_corr_hmm_overlay_plt(
     legend_elements = [Patch(facecolor=col, alpha=0.3, label=f"{r} Regime") for r, col in REGIME_COLORS.items()]
     ax1.legend(handles=legend_elements, loc='upper left')
     
-    # 2. Middle Panel
+    # 2. Second Panel
     ax2.plot(common_idx, corr_sub['Absorption_Ratio'], color='#FF6B6B', linewidth=2, label="Absorption Ratio")
     ax2.fill_between(common_idx, 0, corr_sub['Absorption_Ratio'], color='#FF6B6B', alpha=0.05)
     ax2.plot(common_idx, corr_sub['Corr_Mean'], color='#4ECDC4', linewidth=1.5, linestyle='--', label="Avg Correlation")
@@ -530,14 +565,23 @@ def plot_corr_hmm_overlay_plt(
     ax2.grid(alpha=0.2)
     ax2.set_title("Systemic Risk Metrics")
     
-    # 3. Bottom Panel
+    # 3. Third Panel
+    if 'Absorption_Ratio_Garch' in corr_sub.columns:
+        ax3.plot(common_idx, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', linewidth=2, label="AR GARCH Residuals")
+        ax3.fill_between(common_idx, 0, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', alpha=0.1)
+    ax3.set_ylabel("GARCH Residual")
+    ax3.legend(loc='upper left')
+    ax3.grid(alpha=0.2)
+    ax3.set_title("GARCH-Adjusted Absorption Ratio Shocks")
+    
+    # 4. Bottom Panel
     delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
     bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
-    ax3.bar(common_idx, delta_vals, color=bar_colors, width=1.0)
-    ax3.set_ylabel("λ₁ Delta")
-    ax3.set_xlabel("Date")
-    ax3.grid(alpha=0.2)
-    ax3.set_title("Correlation Acceleration (λ₁ Delta)")
+    ax4.bar(common_idx, delta_vals, color=bar_colors, width=1.0)
+    ax4.set_ylabel("λ₁ Delta")
+    ax4.set_xlabel("Date")
+    ax4.grid(alpha=0.2)
+    ax4.set_title("Correlation Acceleration (λ₁ Delta)")
     
     plt.suptitle(f"HMM Regime & Correlation Analysis — {sector}", fontsize=16)
     plt.tight_layout()

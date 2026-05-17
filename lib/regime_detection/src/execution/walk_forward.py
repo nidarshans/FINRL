@@ -48,7 +48,9 @@ def run_walk_forward(all_data, benchmark_ticker=BENCHMARK,
                      train_days=WF_TRAIN_DAYS, oos_days=WF_OOS_DAYS,
                      min_train_days=WF_MIN_TRAIN_DAYS, mode=WF_MODE,
                      metric=CORR_METRIC):
-    print(f"\n=== WALK-FORWARD ({mode.upper()}) ===")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print(f"\n=== WALK-FORWARD ({mode.upper()}) ===")
     sector_tickers = [t for t in all_data if t != benchmark_ticker]
     all_dates = pd.DatetimeIndex(sorted(set().union(*[set(df.index) for df in all_data.values()])))
     windows = build_wf_windows(all_dates, train_days, oos_days, min_train_days, mode)

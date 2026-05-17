@@ -23,7 +23,9 @@ def _run_pca_pipeline(data_dict, metric=CORR_METRIC):
 
 def _run_corr_pipeline(data_dict, metric=CORR_METRIC):
     """Cross-sector Correlation pipeline: metric → corr → PCA → distil features."""
-    print("\n--- Cross-sector Correlation feature extraction ---")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print("\n--- Cross-sector Correlation feature extraction ---")
     metric_df = compute_metric(data_dict, metric=metric)
     corr_dict = build_corr_matrix(metric_df, window=CORR_WINDOW)
     eigenvalues_df, _, explained_variance_df = run_pca_on_corr(corr_dict)
@@ -32,7 +34,9 @@ def _run_corr_pipeline(data_dict, metric=CORR_METRIC):
 
 
 def train_all_sectors(train_data, metric=CORR_METRIC):
-    print("\n=== TRAINING PHASE ===")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print("\n=== TRAINING PHASE ===")
 
     # Step 1: Cross-sector Correlation features
     corr_features_df = _run_corr_pipeline(train_data, metric=metric)
@@ -40,23 +44,29 @@ def train_all_sectors(train_data, metric=CORR_METRIC):
     # Step 2: Per-sector signal building + HMM training
     trained = {}
     for ticker, df_raw in train_data.items():
-        print(f"  Training {ticker}...", end=" ")
+        if VERBOSE:
+            print(f"  Training {ticker}...", end=" ")
         from lib.regime_detection.src.constants import FEATURES
         df, _ = build_signals(df_raw, corr_features_df)
         features = df[FEATURES].dropna()
         model, state_map, _, scaler = train_model(features)
         if model is None:
-            print("FAILED (insufficient data)")
+            if VERBOSE:
+                print("FAILED (insufficient data)")
             continue
         trained[ticker] = (df, model, state_map, scaler)
-        regime_counts = df['Regime'].value_counts().to_dict() if 'Regime' in df.columns else {}
-        print(f"OK — regimes: {regime_counts}")
-    print(f"  Trained {len(trained)}/{len(train_data)} sectors.")
+        if VERBOSE:
+            regime_counts = df['Regime'].value_counts().to_dict() if 'Regime' in df.columns else {}
+            print(f"OK — regimes: {regime_counts}")
+    if VERBOSE:
+        print(f"  Trained {len(trained)}/{len(train_data)} sectors.")
     return trained
 
 
 def decode_test_sectors(test_data, trained, metric=CORR_METRIC):
-    print("\n=== DECODING TEST PERIOD ===")
+    from lib.regime_detection.src.constants import VERBOSE
+    if VERBOSE:
+        print("\n=== DECODING TEST PERIOD ===")
 
     # Step 1: Cross-sector Correlation features for test data
     corr_features_df = _run_corr_pipeline(test_data, metric=metric)
@@ -65,7 +75,8 @@ def decode_test_sectors(test_data, trained, metric=CORR_METRIC):
     decoded_all = {}
     for ticker, (_, model, state_map, scaler) in trained.items():
         if ticker not in test_data:
-            print(f"  {ticker}: no test data, skipping.")
+            if VERBOSE:
+                print(f"  {ticker}: no test data, skipping.")
             continue
         df_test = test_data[ticker].copy()
 
@@ -74,7 +85,8 @@ def decode_test_sectors(test_data, trained, metric=CORR_METRIC):
         # Generic decode call
         decoded = decode_model(model, state_map, df_test, scaler)
         if decoded.empty:
-            print(f"  {ticker}: decode returned empty.")
+            if VERBOSE:
+                print(f"  {ticker}: decode returned empty.")
             continue
 
         df_test.loc[decoded.index, 'Regime']     = decoded['Regime']
@@ -86,7 +98,8 @@ def decode_test_sectors(test_data, trained, metric=CORR_METRIC):
         df_test.loc[div, 'Rank_Score'] *= DIVERGENCE_MULT
 
         decoded_all[ticker] = df_test
-        print(f"  {ticker}: decoded {len(decoded)} bars.")
+        if VERBOSE:
+            print(f"  {ticker}: decoded {len(decoded)} bars.")
 
     return decoded_all
 

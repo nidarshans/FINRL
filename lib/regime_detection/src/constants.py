@@ -21,9 +21,9 @@ TRAIN_END   = "2022-12-31"   # Train window  (used in simple train/test mode)
 TEST_START  = "2023-01-01"   # Test / backtest window
 TEST_END    = "2026-05-14"
 
-# ── Walk-forward mode ──────────────────────────────────────────────────────
+# Walk-forward mode ──────────────────────────────────────────────────────
 # Set WALK_FORWARD=True to run rolling/anchored WF instead of single train/test
-WALK_FORWARD        = False
+WALK_FORWARD        = True
 
 # "rolling"  → fixed-size train window slides forward each step
 # "anchored" → train window always starts at WF_FULL_START, expands each step
@@ -32,8 +32,9 @@ WF_MODE             = "rolling"
 WF_FULL_START       = "2019-01-01"  # Earliest data used in walk-forward
 WF_FULL_END         = "2022-12-14"  # Last date of the full dataset
 WF_TRAIN_DAYS       = 126           # ~2 trading years per train window
-WF_OOS_DAYS         = 5            # ~3 months out-of-sample per step
+WF_OOS_DAYS         = 21            # ~3 months out-of-sample per step
 WF_MIN_TRAIN_DAYS   = 0   # Minimum bars required before first OOS step
+VERBOSE             = False  # Toggle print statements during training
 # ──────────────────────────────────────────────────────────────────────────
 
 # HMM & Kalman parameters
@@ -66,10 +67,11 @@ DIVERGENCE_MULT    = 0.5
 DIVERGENCE_LOOKBACK = 20
 
 FEATURES = [
-    'KVO', 'Innovation_Z', 'MACD',
-    'Eigenvalue_1', 'Eigenvalue_2',
-    'Absorption_Ratio', 'Corr_Mean', 'Corr_Dispersion', 'Eigenvalue_1_Delta'
+    'KVO', 'Innovation_Z', 'MACD'
 ]
+
+CORR_COLS = ['Eigenvalue_1', 'Eigenvalue_2', 'Absorption_Ratio', 'Absorption_Ratio_Garch', 'Corr_Mean', 'Corr_Dispersion', 'Eigenvalue_1_Delta']
+SIGNAL_COLS = ['VF', 'Filtered_VF', 'Innovation_Z', 'KVO_Fast', 'KVO_Slow', 'KVO', 'MACD']
 
 REGIME_COLORS = {'Bull': '#4CAF50', 'Stagnant': '#FFC107', 'Bear': '#F44336'}
 SECTOR_COLORS = [

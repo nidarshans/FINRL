@@ -9,7 +9,11 @@ def _make_transmat(corr_stress: float = 0.0) -> np.ndarray:
     Return a 3x3 transition matrix biased by cross-sector correlation stress.
     corr_stress in [0, 1]: 0 = calm, 1 = maximum systemic risk.
     """
-    stress = np.clip(corr_stress, 0.0, 1.0)
+    # Guard against NaN/Inf/None defensively
+    if corr_stress is None or not np.isfinite(corr_stress):
+        stress = 0.0
+    else:
+        stress = float(np.clip(corr_stress, 0.0, 1.0))
     
     # Stay probabilities scale down under stress for calm regimes,
     # and stay in Bear slightly longer
@@ -51,16 +55,13 @@ def train_hmm(features_df):
     model = GMMHMM(
         n_components=3, n_mix=3,
         covariance_type="diag",
+        min_covar=0.1,
         n_iter=HMM_ITER, random_state=42,
         init_params="wmc"
     )
-    
-    corr_stress = 0.0
-    if 'Absorption_Ratio' in features.columns:
-        corr_stress = float(features['Absorption_Ratio'].mean())
 
     model.startprob_ = np.array([0.33, 0.33, 0.34])
-    model.transmat_  = _make_transmat(corr_stress)
+    
     try:
         model.fit(scaled_data)
     except (ValueError, np.linalg.LinAlgError) as e:

@@ -75,7 +75,9 @@ def fit_garch_all(data_dict: dict, p: int = GARCH_P, q: int = GARCH_Q) -> pd.Dat
     for ticker, df in data_dict.items():
         returns = df["Close"].pct_change()
         residuals[ticker] = fit_garch(returns, p=p, q=q)
-        print(f"  [GARCH] {ticker}: fitted GARCH({p},{q})")
+        from lib.regime_detection.src.constants import VERBOSE
+        if VERBOSE:
+            print(f"  [GARCH] {ticker}: fitted GARCH({p},{q})")
 
     metric_df = pd.DataFrame(residuals)
     # Drop rows that are all-NaN (warmup period)
