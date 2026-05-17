@@ -51,6 +51,8 @@ CORR_WINDOW        = 21               # Rolling window in trading days
 GARCH_P            = 1                # GARCH(p,q) order
 GARCH_Q            = 1
 PCA_N_COMPONENTS   = None             # None = keep all; int = keep top-N
+CORR_DELTA_WINDOW  = 5                # Days over which to compute Eigenvalue_1_Delta
+AR_SCORE_WEIGHT    = 0.15             # Weight to penalize high systemic risk in Rank_Score
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Walk-forward backtest parameters
@@ -63,7 +65,11 @@ BEAR_EXIT_PROB  = 0.25     # Immediate exit if P(Bear) exceeds this
 DIVERGENCE_MULT    = 0.5
 DIVERGENCE_LOOKBACK = 20
 
-FEATURES = ['KVO', 'Innovation_Z', 'MACD', 'Eigenvalue_1', 'Eigenvalue_2']
+FEATURES = [
+    'KVO', 'Innovation_Z', 'MACD',
+    'Eigenvalue_1', 'Eigenvalue_2',
+    'Absorption_Ratio', 'Corr_Mean', 'Corr_Dispersion', 'Eigenvalue_1_Delta'
+]
 
 REGIME_COLORS = {'Bull': '#4CAF50', 'Stagnant': '#FFC107', 'Bear': '#F44336'}
 SECTOR_COLORS = [

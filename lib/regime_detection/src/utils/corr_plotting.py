@@ -312,3 +312,233 @@ def plot_absorption_ratio_plt(explained_variance_df: pd.DataFrame, k: int = 1):
     plt.grid(alpha=0.2)
     plt.legend()
     plt.show()
+
+
+def plot_corr_hmm_overlay(
+    corr_features_df: pd.DataFrame,
+    hmm_results_df: pd.DataFrame,
+    price_df: pd.DataFrame,
+    sector: str,
+) -> go.Figure:
+    """
+    Stunning three-panel interactive dashboard aligning HMM regimes with correlation dynamics.
+    
+    Parameters
+    ----------
+    corr_features_df : pd.DataFrame
+        Distilled correlation features including 'Absorption_Ratio', 'Corr_Mean', 'Eigenvalue_1_Delta'.
+    hmm_results_df : pd.DataFrame
+        HMM output including 'Regime', 'P_Bull', 'P_Bear', 'Rank_Score'.
+    price_df : pd.DataFrame
+        Asset prices DataFrame containing sector.
+    sector : str
+        Ticker symbol.
+    """
+    from lib.regime_detection.src.constants import REGIME_COLORS
+    
+    common_idx = corr_features_df.index.intersection(hmm_results_df.index).intersection(price_df.index)
+    if len(common_idx) == 0:
+        print("  [PLOT] No overlapping dates between dataframes.")
+        return go.Figure()
+        
+    corr_sub = corr_features_df.loc[common_idx]
+    hmm_sub = hmm_results_df.loc[common_idx]
+    price_sub = price_df.loc[common_idx]
+    
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=(
+            f"{sector} Price & HMM Predicted Regimes",
+            "Systemic Risk: Absorption Ratio & Average Sector Correlation",
+            "Correlation Acceleration (λ₁ Delta)"
+        ),
+        row_heights=[0.5, 0.25, 0.25]
+    )
+    
+    # 1. Top Panel: Price + Regime Bands
+    fig.add_trace(
+        go.Scatter(
+            x=common_idx,
+            y=price_sub[sector],
+            mode="lines",
+            name=f"{sector} Price",
+            line=dict(color="#FFFFFF", width=2),
+        ),
+        row=1, col=1
+    )
+    
+    # Contiguous regime blocks
+    regimes = hmm_sub['Regime'].values
+    dates = common_idx.tolist()
+    
+    i = 0
+    shapes = []
+    while i < len(regimes):
+        r = regimes[i]
+        start_date = dates[i]
+        while i < len(regimes) and regimes[i] == r:
+            i += 1
+        end_date = dates[min(i, len(regimes) - 1)]
+        
+        color = REGIME_COLORS.get(r, '#7f7f7f')
+        shapes.append(dict(
+            type="rect",
+            xref="x",
+            yref="paper",
+            x0=start_date,
+            y0=0.0,
+            x1=end_date,
+            y1=1.0,
+            fillcolor=color,
+            opacity=0.15,
+            layer="below",
+            line_width=0,
+        ))
+        
+    for r, col in REGIME_COLORS.items():
+        fig.add_trace(
+            go.Scatter(
+                x=[None], y=[None],
+                mode="markers",
+                marker=dict(size=10, color=col, symbol="square"),
+                name=f"{r} Regime Band",
+                showlegend=True
+            ),
+            row=1, col=1
+        )
+        
+    # 2. Middle Panel: Absorption Ratio & Corr Mean
+    fig.add_trace(
+        go.Scatter(
+            x=common_idx,
+            y=corr_sub['Absorption_Ratio'],
+            mode="lines",
+            name="Absorption Ratio",
+            line=dict(color="#FF6B6B", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(255,107,107,0.05)"
+        ),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=common_idx,
+            y=corr_sub['Corr_Mean'],
+            mode="lines",
+            name="Avg Correlation",
+            line=dict(color="#4ECDC4", width=1.5, dash="dash"),
+        ),
+        row=2, col=1
+    )
+    
+    # 3. Bottom Panel: Eigenvalue 1 Delta
+    delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
+    bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
+    
+    fig.add_trace(
+        go.Bar(
+            x=common_idx,
+            y=delta_vals,
+            name="λ₁ Acceleration",
+            marker_color=bar_colors,
+            opacity=0.8
+        ),
+        row=3, col=1
+    )
+    
+    fig.update_layout(
+        title=dict(
+            text=f"Correlation & HMM Regime Dashboard — {sector}",
+            x=0.5,
+            xanchor="center",
+            font=dict(size=20)
+        ),
+        template="plotly_dark",
+        hovermode="x unified",
+        height=750,
+        width=1100,
+        shapes=shapes,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(t=100, b=50, l=50, r=50)
+    )
+    
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="Ratio / Corr", row=2, col=1)
+    fig.update_yaxes(title_text="Change", row=3, col=1)
+    fig.update_xaxes(title_text="Date", row=3, col=1)
+    
+    return fig
+
+
+def plot_corr_hmm_overlay_plt(
+    corr_features_df: pd.DataFrame,
+    hmm_results_df: pd.DataFrame,
+    price_df: pd.DataFrame,
+    sector: str,
+):
+    """Matplotlib version of the dashboard."""
+    from lib.regime_detection.src.constants import REGIME_COLORS
+    
+    common_idx = corr_features_df.index.intersection(hmm_results_df.index).intersection(price_df.index)
+    if len(common_idx) == 0:
+        print("No overlapping dates.")
+        return
+        
+    corr_sub = corr_features_df.loc[common_idx]
+    hmm_sub = hmm_results_df.loc[common_idx]
+    price_sub = price_df.loc[common_idx]
+    
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+    
+    # 1. Top Panel
+    ax1.plot(common_idx, price_sub[sector], color='white', linewidth=2, label=f"{sector} Price")
+    
+    # Background bands
+    regimes = hmm_sub['Regime'].values
+    dates = common_idx.tolist()
+    i = 0
+    while i < len(regimes):
+        r = regimes[i]
+        start_date = dates[i]
+        while i < len(regimes) and regimes[i] == r:
+            i += 1
+        end_date = dates[min(i, len(regimes) - 1)]
+        color = REGIME_COLORS.get(r, '#7f7f7f')
+        ax1.axvspan(start_date, end_date, color=color, alpha=0.15)
+        
+    ax1.set_ylabel("Price")
+    ax1.set_title(f"{sector} Price & HMM Regimes")
+    
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=col, alpha=0.3, label=f"{r} Regime") for r, col in REGIME_COLORS.items()]
+    ax1.legend(handles=legend_elements, loc='upper left')
+    
+    # 2. Middle Panel
+    ax2.plot(common_idx, corr_sub['Absorption_Ratio'], color='#FF6B6B', linewidth=2, label="Absorption Ratio")
+    ax2.fill_between(common_idx, 0, corr_sub['Absorption_Ratio'], color='#FF6B6B', alpha=0.05)
+    ax2.plot(common_idx, corr_sub['Corr_Mean'], color='#4ECDC4', linewidth=1.5, linestyle='--', label="Avg Correlation")
+    ax2.set_ylabel("Ratio / Correlation")
+    ax2.legend(loc='upper left')
+    ax2.grid(alpha=0.2)
+    ax2.set_title("Systemic Risk Metrics")
+    
+    # 3. Bottom Panel
+    delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
+    bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
+    ax3.bar(common_idx, delta_vals, color=bar_colors, width=1.0)
+    ax3.set_ylabel("λ₁ Delta")
+    ax3.set_xlabel("Date")
+    ax3.grid(alpha=0.2)
+    ax3.set_title("Correlation Acceleration (λ₁ Delta)")
+    
+    plt.suptitle(f"HMM Regime & Correlation Analysis — {sector}", fontsize=16)
+    plt.tight_layout()
+    plt.show()

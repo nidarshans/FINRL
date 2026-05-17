@@ -3,7 +3,7 @@ import pandas_ta as ta
 from lib.regime_detection.src.constants import VOL_WINDOW, KVO_FAST_SPAN, KVO_SLOW_SPAN, DIVERGENCE_LOOKBACK
 from lib.regime_detection.src.filters.kalman import apply_kalman_to_vf
 
-def build_signals(df):
+def build_signals(df, corr_features_df=None):
     df            = df.copy()
     df['Returns'] = df['Close'].pct_change()
     df['Vol']     = df['Returns'].rolling(VOL_WINDOW).std()
@@ -16,9 +16,14 @@ def build_signals(df):
     macd_df  = df.ta.macd(fast=12, slow=26, signal=9, append=False)
     raw_macd = macd_df.iloc[:, 1]
 
+    corr_cols = ['Eigenvalue_1', 'Eigenvalue_2', 'Absorption_Ratio', 'Corr_Mean', 'Corr_Dispersion', 'Eigenvalue_1_Delta']
+
     if kvo_df is None or kvo_df.empty:
         for col in ['VF','Filtered_VF','Innovation_Z','KVO_Fast','KVO_Slow','KVO','MACD']:
             df[col] = 0.0
+        if corr_features_df is not None:
+            for col in corr_cols:
+                df[col] = 0.0
         return df, avg_vol
 
     vf_series   = kvo_df.iloc[:, 0]
@@ -32,6 +37,15 @@ def build_signals(df):
     df['KVO_Slow']     = kvo_df.iloc[:, 1] if kvo_df.shape[1] > 1 else 0.0
     df['KVO']          = df['KVO_Slow']
     df['MACD']         = raw_macd
+
+    if corr_features_df is not None:
+        aligned = corr_features_df.reindex(df.index).ffill().bfill()
+        for col in corr_cols:
+            if col in aligned.columns:
+                df[col] = aligned[col]
+            else:
+                df[col] = 0.0
+
     return df, avg_vol
 
 

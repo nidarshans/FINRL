@@ -282,3 +282,47 @@ def inject_pca_features(
     injected_count = sum(1 for df in result.values() if "Eigenvalue_1" in df.columns)
     print(f"  [INJECT] Added {eig_cols} to {injected_count}/{len(data_dict)} sectors")
     return result
+
+
+def compute_corr_features(
+    corr_dict: dict,
+    eigenvalues_df: pd.DataFrame,
+    explained_variance_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Distil rolling correlation matrices + PCA results into a per-date
+    feature DataFrame for HMM consumption.
+    """
+    if not corr_dict or eigenvalues_df.empty or explained_variance_df.empty:
+        return pd.DataFrame()
+
+    from lib.regime_detection.src.constants import CORR_DELTA_WINDOW
+
+    dates = sorted(corr_dict.keys())
+    
+    corr_means = []
+    corr_disps = []
+    
+    for date in dates:
+        corr, valid_cols = corr_dict[date]
+        if corr.shape[0] > 1:
+            mask = ~np.eye(corr.shape[0], dtype=bool)
+            off_diag = corr[mask]
+            corr_means.append(off_diag.mean())
+            corr_disps.append(off_diag.std())
+        else:
+            corr_means.append(0.0)
+            corr_disps.append(0.0)
+            
+    out_df = pd.DataFrame(index=dates)
+    out_df['Eigenvalue_1'] = eigenvalues_df['Eigenvalue_1']
+    if 'Eigenvalue_2' in eigenvalues_df.columns:
+        out_df['Eigenvalue_2'] = eigenvalues_df['Eigenvalue_2']
+    else:
+        out_df['Eigenvalue_2'] = 0.0
+    out_df['Absorption_Ratio'] = explained_variance_df['PC_1_var']
+    out_df['Corr_Mean'] = corr_means
+    out_df['Corr_Dispersion'] = corr_disps
+    out_df['Eigenvalue_1_Delta'] = eigenvalues_df['Eigenvalue_1'].diff(periods=CORR_DELTA_WINDOW)
+    
+    return out_df
