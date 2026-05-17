@@ -14,63 +14,88 @@ def plot_results(result, weights_aligned, decoded_all, close_prices, output_path
     colors  = {t: SECTOR_COLORS[i % len(SECTOR_COLORS)] for i, t in enumerate(tickers)}
     n_panels = 5 if wf_windows else 4
     fig_height = 22 if not wf_windows else 27
-    fig = plt.figure(figsize=(20, fig_height))
-    fig.patch.set_facecolor('#0f0f1a')
-    gs = gridspec.GridSpec(n_panels, 1, figure=fig, hspace=0.45,
-                           height_ratios=[2.5, 1.2, 2.5, 2.5] if not wf_windows else [2.5, 1.2, 2.5, 2.5, 1.2])
 
     text_color, grid_color, bg_color = '#e0e0e0', '#2a2a3a', '#16162a'
-    ax_style = dict(facecolor=bg_color)
 
-    # 1. Equity Curves
-    ax1 = fig.add_subplot(gs[0], **ax_style)
-    prices = result.prices
-    for col in prices.columns:
-        norm = prices[col] / prices[col].iloc[0] * 100
-        ax1.plot(prices.index, norm, label=col, lw=2.5 if "HMM" in col else 1.5,
-                 ls='-' if "HMM" in col else '--', color='#00e5ff' if "HMM" in col else '#ff9800')
-    ax1.legend(facecolor='#1e1e2e', labelcolor=text_color)
-    ax1.set_title("Equity Curves", color=text_color)
+    with plt.style.context('dark_background'):
+        fig = plt.figure(figsize=(20, fig_height))
+        fig.patch.set_facecolor('#0f0f1a')
+        gs = gridspec.GridSpec(n_panels, 1, figure=fig, hspace=0.45,
+                               height_ratios=[2.5, 1.2, 2.5, 2.5] if not wf_windows else [2.5, 1.2, 2.5, 2.5, 1.2])
 
-    # 2. Drawdown
-    ax2 = fig.add_subplot(gs[1], **ax_style)
-    for col in prices.columns:
-        dd = (prices[col] / prices[col].cummax() - 1) * 100
-        ax2.plot(dd.index, dd, color='#00e5ff' if "HMM" in col else '#ff9800', label=col)
-    ax2.set_title("Drawdown (%)", color=text_color)
+        ax_style = dict(facecolor=bg_color)
 
-    # 3. Allocation
-    ax3 = fig.add_subplot(gs[2], **ax_style)
-    wa_w = weights_aligned.resample('W').last().ffill().fillna(0)
-    bottom = np.zeros(len(wa_w))
-    for ticker in wa_w.columns:
-        if wa_w[ticker].sum() > 0:
-            ax3.fill_between(wa_w.index, bottom, bottom + wa_w[ticker], color=colors.get(ticker, '#ccc'), label=ticker)
-            bottom += wa_w[ticker]
-    ax3.set_title("Sector Allocation", color=text_color)
+        def style_axis(ax):
+            ax.tick_params(colors=text_color, which='both', labelsize=11)
+            ax.grid(True, color=grid_color, alpha=0.4, linestyle=':')
+            for spine in ['top', 'right']:
+                ax.spines[spine].set_visible(False)
+            for spine in ['left', 'bottom']:
+                ax.spines[spine].set_color(grid_color)
 
-    # 4. Regimes
-    ax4 = fig.add_subplot(gs[3], **ax_style)
-    regime_map = {'Bull': 1, 'Stagnant': 0, 'Bear': -1}
-    regime_frames = {t: df['Regime'].map(regime_map) for t, df in decoded_all.items() if 'Regime' in df.columns}
-    if regime_frames:
-        rdf = pd.DataFrame(regime_frames).resample('W').last().ffill().reindex(columns=wa_w.columns).dropna(how='all')
-        ax4.imshow(rdf.T.values, aspect='auto', cmap=ListedColormap(['#F44336', '#FFC107', '#4CAF50']), vmin=-1, vmax=1,
-                   extent=[matplotlib.dates.date2num(rdf.index[0]), matplotlib.dates.date2num(rdf.index[-1]), -0.5, len(rdf.columns)-0.5])
-        ax4.set_yticks(range(len(rdf.columns)))
-        ax4.set_yticklabels(rdf.columns, color=text_color)
-        ax4.xaxis_date()
+        # 1. Equity Curves
+        ax1 = fig.add_subplot(gs[0], **ax_style)
+        prices = result.prices
+        for col in prices.columns:
+            norm = prices[col] / prices[col].iloc[0] * 100
+            ax1.plot(prices.index, norm, label=col, lw=2.5 if "HMM" in col else 1.5,
+                     ls='-' if "HMM" in col else '--', color='#00e5ff' if "HMM" in col else '#ff9800')
+        ax1.legend(facecolor='#1e1e2e', labelcolor=text_color, edgecolor=grid_color)
+        ax1.set_title("Equity Curves", color=text_color, fontsize=14, fontweight='bold')
+        style_axis(ax1)
 
-    # 5. WF Map
-    if wf_windows:
-        ax5 = fig.add_subplot(gs[4], **ax_style)
-        for idx, (tr_s, tr_e, oos_s, oos_e) in enumerate(wf_windows):
-            y = idx % 3
-            ax5.barh(y, (pd.Timestamp(tr_e) - pd.Timestamp(tr_s)).days, left=matplotlib.dates.date2num(pd.Timestamp(tr_s)), color='#1565C0', height=0.35)
-            ax5.barh(y, (pd.Timestamp(oos_e) - pd.Timestamp(oos_s)).days, left=matplotlib.dates.date2num(pd.Timestamp(oos_s)), color='#00e5ff', height=0.35)
-        ax5.xaxis_date()
+        # 2. Drawdown
+        ax2 = fig.add_subplot(gs[1], **ax_style)
+        for col in prices.columns:
+            dd = (prices[col] / prices[col].cummax() - 1) * 100
+            ax2.plot(dd.index, dd, color='#00e5ff' if "HMM" in col else '#ff9800', label=col)
+        ax2.set_title("Drawdown (%)", color=text_color, fontsize=14, fontweight='bold')
+        style_axis(ax2)
 
-    plt.show()
+        # 3. Allocation
+        ax3 = fig.add_subplot(gs[2], **ax_style)
+        wa_w = weights_aligned.resample('W').last().ffill().fillna(0)
+        bottom = np.zeros(len(wa_w))
+        for ticker in wa_w.columns:
+            if wa_w[ticker].sum() > 0:
+                ax3.fill_between(wa_w.index, bottom, bottom + wa_w[ticker], color=colors.get(ticker, '#ccc'), label=ticker)
+                bottom += wa_w[ticker]
+        ax3.set_title("Sector Allocation", color=text_color, fontsize=14, fontweight='bold')
+        style_axis(ax3)
+        # Position the allocation legend outside the main axis on the right side
+        ax3.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), borderaxespad=0.,
+                   facecolor='#1e1e2e', edgecolor=grid_color, labelcolor=text_color, fontsize=11)
+
+        # 4. Regimes
+        ax4 = fig.add_subplot(gs[3], **ax_style)
+        regime_map = {'Bull': 1, 'Stagnant': 0, 'Bear': -1}
+        regime_frames = {t: df['Regime'].map(regime_map) for t, df in decoded_all.items() if 'Regime' in df.columns}
+        if regime_frames:
+            rdf = pd.DataFrame(regime_frames).resample('W').last().ffill().reindex(columns=wa_w.columns).dropna(how='all')
+            ax4.imshow(rdf.T.values, aspect='auto', cmap=ListedColormap(['#F44336', '#FFC107', '#4CAF50']), vmin=-1, vmax=1,
+                       extent=[matplotlib.dates.date2num(rdf.index[0]), matplotlib.dates.date2num(rdf.index[-1]), -0.5, len(rdf.columns)-0.5])
+            ax4.set_yticks(range(len(rdf.columns)))
+            ax4.set_yticklabels(rdf.columns, color=text_color)
+            ax4.xaxis_date()
+        ax4.set_title("HMM Predicted Regimes", color=text_color, fontsize=14, fontweight='bold')
+        style_axis(ax4)
+        ax4.grid(False)
+
+        # 5. WF Map
+        if wf_windows:
+            ax5 = fig.add_subplot(gs[4], **ax_style)
+            for idx, (tr_s, tr_e, oos_s, oos_e) in enumerate(wf_windows):
+                y = idx % 3
+                ax5.barh(y, (pd.Timestamp(tr_e) - pd.Timestamp(tr_s)).days, left=matplotlib.dates.date2num(pd.Timestamp(tr_s)), color='#1565C0', height=0.35)
+                ax5.barh(y, (pd.Timestamp(oos_e) - pd.Timestamp(oos_s)).days, left=matplotlib.dates.date2num(pd.Timestamp(oos_s)), color='#00e5ff', height=0.35)
+            ax5.xaxis_date()
+            ax5.set_title("Walk-Forward Windows", color=text_color, fontsize=14, fontweight='bold')
+            style_axis(ax5)
+            ax5.grid(False)
+
+        if output_path:
+            fig.savefig(output_path, dpi=150, facecolor=fig.get_facecolor(), bbox_inches='tight')
+        plt.show()
 
 
 def print_stats(result):

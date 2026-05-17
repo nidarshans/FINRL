@@ -225,67 +225,74 @@ def plot_corr_regime_overlay(
 
 def plot_eigenvalue_evolution_plt(eigenvalues_df: pd.DataFrame, top_n: int = 3):
     """Matplotlib version of eigenvalue evolution."""
-    plt.figure(figsize=(12, 5))
-    cols = [c for c in eigenvalues_df.columns if c.startswith("Eigenvalue_")][:top_n]
-    for col in cols:
-        plt.plot(eigenvalues_df.index, eigenvalues_df[col], label=col)
-    plt.title("Eigenvalue Evolution (Matplotlib)")
-    plt.xlabel("Date")
-    plt.ylabel("Value")
-    plt.legend()
-    plt.grid(alpha=0.2)
-    plt.show()
+    with plt.style.context('dark_background'):
+        plt.figure(figsize=(12, 5))
+        cols = [c for c in eigenvalues_df.columns if c.startswith("Eigenvalue_")][:top_n]
+        for col in cols:
+            plt.plot(eigenvalues_df.index, eigenvalues_df[col], label=col)
+        plt.title("Eigenvalue Evolution (Matplotlib)", color='#e0e0e0')
+        plt.xlabel("Date", color='#e0e0e0')
+        plt.ylabel("Value", color='#e0e0e0')
+        plt.legend(facecolor='#1e1e2e', edgecolor='#2a2a3a')
+        plt.grid(alpha=0.2)
+        plt.show()
 
 def plot_pc1_loadings_plt(pc1_loadings_df: pd.DataFrame, sectors: list, n_dates: int = 4):
     """Matplotlib version of PC1 loadings snapshots."""
-    dates = pc1_loadings_df.index
-    step = max(len(dates) // n_dates, 1)
-    snapshot_dates = [dates[i] for i in range(0, len(dates), step)][:n_dates]
-    
-    fig, axes = plt.subplots(1, len(snapshot_dates), figsize=(4*len(snapshot_dates), 4), sharey=True)
-    if len(snapshot_dates) == 1: axes = [axes]
-    
-    labels = sectors[: pc1_loadings_df.shape[1]]
-    for i, date in enumerate(snapshot_dates):
-        axes[i].bar(labels, pc1_loadings_df.loc[date])
-        axes[i].set_title(str(date.date()) if hasattr(date, "date") else str(date))
-        axes[i].tick_params(axis='x', rotation=45)
-    
-    plt.suptitle("PC1 Sector Loadings snapshots")
-    plt.tight_layout()
-    plt.show()
+    with plt.style.context('dark_background'):
+        dates = pc1_loadings_df.index
+        step = max(len(dates) // n_dates, 1)
+        snapshot_dates = [dates[i] for i in range(0, len(dates), step)][:n_dates]
+        
+        fig, axes = plt.subplots(1, len(snapshot_dates), figsize=(4*len(snapshot_dates), 4), sharey=True)
+        if len(snapshot_dates) == 1: axes = [axes]
+        
+        labels = sectors[: pc1_loadings_df.shape[1]]
+        for i, date in enumerate(snapshot_dates):
+            axes[i].bar(labels, pc1_loadings_df.loc[date])
+            axes[i].set_title(str(date.date()) if hasattr(date, "date") else str(date), color='#e0e0e0')
+            axes[i].tick_params(axis='x', rotation=45, colors='#e0e0e0')
+            axes[i].tick_params(axis='y', colors='#e0e0e0')
+            axes[i].grid(alpha=0.1)
+        
+        plt.suptitle("PC1 Sector Loadings snapshots", color='#e0e0e0')
+        plt.tight_layout()
+        plt.show()
 
 def plot_corr_heatmap_plt(corr_data, date, sectors: list):
     """Matplotlib version of correlation heatmap."""
-    if isinstance(corr_data, tuple):
-        corr_matrix, labels = corr_data
-    else:
-        corr_matrix = corr_data
-        labels = sectors[: corr_matrix.shape[0]]
+    with plt.style.context('dark_background'):
+        if isinstance(corr_data, tuple):
+            corr_matrix, labels = corr_data
+        else:
+            corr_matrix = corr_data
+            labels = sectors[: corr_matrix.shape[0]]
 
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(corr_matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
-    plt.title(f"Correlation Matrix — {date}")
-    plt.show()
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(corr_matrix, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
+        plt.title(f"Correlation Matrix — {date}", color='#e0e0e0')
+        plt.show()
 
 def plot_corr_regime_overlay_plt(eigenvalues_df: pd.DataFrame, price_df: pd.DataFrame, sector: str):
     """Matplotlib version of regime overlay."""
-    fig, ax1 = plt.subplots(figsize=(12, 5))
-    
-    if sector in price_df.columns:
-        ax1.plot(price_df.index, price_df[sector], color='#4ECDC4', label=f"{sector} Price")
-        ax1.set_ylabel("Price", color='#4ECDC4')
-        ax1.tick_params(axis='y', labelcolor='#4ECDC4')
-    
-    if "Eigenvalue_1" in eigenvalues_df.columns:
-        ax2 = ax1.twinx()
-        ax2.fill_between(eigenvalues_df.index, 0, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', alpha=0.2, label="λ₁")
-        ax2.plot(eigenvalues_df.index, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', label="λ₁")
-        ax2.set_ylabel("Eigenvalue λ₁", color='#FF6B6B')
-        ax2.tick_params(axis='y', labelcolor='#FF6B6B')
-    
-    plt.title(f"Regime Overlay — {sector} vs λ₁")
-    plt.show()
+    with plt.style.context('dark_background'):
+        fig, ax1 = plt.subplots(figsize=(12, 5))
+        
+        if sector in price_df.columns:
+            ax1.plot(price_df.index, price_df[sector], color='#4ECDC4', label=f"{sector} Price")
+            ax1.set_ylabel("Price", color='#4ECDC4')
+            ax1.tick_params(axis='y', labelcolor='#4ECDC4')
+            ax1.tick_params(axis='x', colors='#e0e0e0')
+        
+        if "Eigenvalue_1" in eigenvalues_df.columns:
+            ax2 = ax1.twinx()
+            ax2.fill_between(eigenvalues_df.index, 0, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', alpha=0.2, label="λ₁")
+            ax2.plot(eigenvalues_df.index, eigenvalues_df["Eigenvalue_1"], color='#FF6B6B', label="λ₁")
+            ax2.set_ylabel("Eigenvalue λ₁", color='#FF6B6B')
+            ax2.tick_params(axis='y', labelcolor='#FF6B6B')
+        
+        plt.title(f"Regime Overlay — {sector} vs λ₁", color='#e0e0e0')
+        plt.show()
 
 def plot_absorption_ratio_plt(explained_variance_df: pd.DataFrame, k: int = 1):
     """Matplotlib version of Absorption Ratio plot (Cumulative)."""
@@ -293,25 +300,26 @@ def plot_absorption_ratio_plt(explained_variance_df: pd.DataFrame, k: int = 1):
         print("Explained variance DataFrame is empty.")
         return
         
-    plt.figure(figsize=(12, 5))
-    colors = ["#FF6B6B", "#4ECDC4", "#FFD93D", "#45B7D1", "#96CEB4"]
-    
-    for i in range(1, k + 1):
-        ar_series = explained_variance_df.iloc[:, :i].sum(axis=1)
-        plt.plot(ar_series.index, ar_series, 
-                 label=f"AR (k={i})", 
-                 color=colors[(i-1) % len(colors)],
-                 linewidth=2 if i == k else 1.5,
-                 alpha=1.0 if i == k else 0.6)
-                 
-    plt.fill_between(ar_series.index, 0, ar_series, color=colors[(k-1) % len(colors)], alpha=0.05)
-    plt.title(f"Cumulative Absorption Ratio Evolution (Top {k} Components)")
-    plt.xlabel("Date")
-    plt.ylabel("Fraction of Total Variance")
-    plt.ylim(0, 1.1)
-    plt.grid(alpha=0.2)
-    plt.legend()
-    plt.show()
+    with plt.style.context('dark_background'):
+        plt.figure(figsize=(12, 5))
+        colors = ["#FF6B6B", "#4ECDC4", "#FFD93D", "#45B7D1", "#96CEB4"]
+        
+        for i in range(1, k + 1):
+            ar_series = explained_variance_df.iloc[:, :i].sum(axis=1)
+            plt.plot(ar_series.index, ar_series, 
+                     label=f"AR (k={i})", 
+                     color=colors[(i-1) % len(colors)],
+                     linewidth=2 if i == k else 1.5,
+                     alpha=1.0 if i == k else 0.6)
+                     
+        plt.fill_between(ar_series.index, 0, ar_series, color=colors[(k-1) % len(colors)], alpha=0.05)
+        plt.title(f"Cumulative Absorption Ratio Evolution (Top {k} Components)", color='#e0e0e0')
+        plt.xlabel("Date", color='#e0e0e0')
+        plt.ylabel("Fraction of Total Variance", color='#e0e0e0')
+        plt.ylim(0, 1.1)
+        plt.grid(alpha=0.2)
+        plt.legend(facecolor='#1e1e2e', edgecolor='#2a2a3a')
+        plt.show()
 
 
 def plot_corr_hmm_overlay(
@@ -530,59 +538,66 @@ def plot_corr_hmm_overlay_plt(
     else:
         price_series = price_sub.iloc[:, 0]
 
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
-    
-    # 1. Top Panel
-    ax1.plot(common_idx, price_series, color='white', linewidth=2, label=f"{sector} Price")
-    
-    # Background bands
-    regimes = hmm_sub['Regime'].values
-    dates = common_idx.tolist()
-    i = 0
-    while i < len(regimes):
-        r = regimes[i]
-        start_date = dates[i]
-        while i < len(regimes) and (regimes[i] == r or (pd.isnull(regimes[i]) and pd.isnull(r))):
-            i += 1
-        end_date = dates[min(i, len(regimes) - 1)]
-        if pd.notnull(r):
-            color = REGIME_COLORS.get(r, '#7f7f7f')
-            ax1.axvspan(start_date, end_date, color=color, alpha=0.15)
+    with plt.style.context('dark_background'):
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
         
-    ax1.set_ylabel("Price")
-    ax1.set_title(f"{sector} Price & HMM Regimes")
-    
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=col, alpha=0.3, label=f"{r} Regime") for r, col in REGIME_COLORS.items()]
-    ax1.legend(handles=legend_elements, loc='upper left')
-    
-    # 2. Second Panel
-    ax2.plot(common_idx, corr_sub['Absorption_Ratio'], color='#FF6B6B', linewidth=2, label="Absorption Ratio")
-    ax2.fill_between(common_idx, 0, corr_sub['Absorption_Ratio'], color='#FF6B6B', alpha=0.05)
-    ax2.plot(common_idx, corr_sub['Corr_Mean'], color='#4ECDC4', linewidth=1.5, linestyle='--', label="Avg Correlation")
-    ax2.set_ylabel("Ratio / Correlation")
-    ax2.legend(loc='upper left')
-    ax2.grid(alpha=0.2)
-    ax2.set_title("Systemic Risk Metrics")
-    
-    # 3. Third Panel
-    if 'Absorption_Ratio_Garch' in corr_sub.columns:
-        ax3.plot(common_idx, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', linewidth=2, label="AR GARCH Residuals")
-        ax3.fill_between(common_idx, 0, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', alpha=0.1)
-    ax3.set_ylabel("GARCH Residual")
-    ax3.legend(loc='upper left')
-    ax3.grid(alpha=0.2)
-    ax3.set_title("GARCH-Adjusted Absorption Ratio Shocks")
-    
-    # 4. Bottom Panel
-    delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
-    bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
-    ax4.bar(common_idx, delta_vals, color=bar_colors, width=1.0)
-    ax4.set_ylabel("λ₁ Delta")
-    ax4.set_xlabel("Date")
-    ax4.grid(alpha=0.2)
-    ax4.set_title("Correlation Acceleration (λ₁ Delta)")
-    
-    plt.suptitle(f"HMM Regime & Correlation Analysis — {sector}", fontsize=16)
-    plt.tight_layout()
-    plt.show()
+        # Style axes
+        for ax in (ax1, ax2, ax3, ax4):
+            ax.tick_params(colors='#e0e0e0', which='both', labelsize=10)
+            ax.grid(True, color='#2a2a3a', alpha=0.3, linestyle=':')
+            for spine in ['top', 'right']:
+                ax.spines[spine].set_visible(False)
+            for spine in ['left', 'bottom']:
+                ax.spines[spine].set_color('#2a2a3a')
+
+        # 1. Top Panel
+        ax1.plot(common_idx, price_series, color='white', linewidth=2, label=f"{sector} Price")
+        
+        # Background bands
+        regimes = hmm_sub['Regime'].values
+        dates = common_idx.tolist()
+        i = 0
+        while i < len(regimes):
+            r = regimes[i]
+            start_date = dates[i]
+            while i < len(regimes) and (regimes[i] == r or (pd.isnull(regimes[i]) and pd.isnull(r))):
+                i += 1
+            end_date = dates[min(i, len(regimes) - 1)]
+            if pd.notnull(r):
+                color = REGIME_COLORS.get(r, '#7f7f7f')
+                ax1.axvspan(start_date, end_date, color=color, alpha=0.15)
+            
+        ax1.set_ylabel("Price", color='#e0e0e0')
+        ax1.set_title(f"{sector} Price & HMM Regimes", color='#e0e0e0', fontsize=12, fontweight='bold')
+        
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=col, alpha=0.3, label=f"{r} Regime") for r, col in REGIME_COLORS.items()]
+        ax1.legend(handles=legend_elements, loc='upper left', facecolor='#1e1e2e', edgecolor='#2a2a3a', labelcolor='#e0e0e0')
+        
+        # 2. Second Panel
+        ax2.plot(common_idx, corr_sub['Absorption_Ratio'], color='#FF6B6B', linewidth=2, label="Absorption Ratio")
+        ax2.fill_between(common_idx, 0, corr_sub['Absorption_Ratio'], color='#FF6B6B', alpha=0.05)
+        ax2.plot(common_idx, corr_sub['Corr_Mean'], color='#4ECDC4', linewidth=1.5, linestyle='--', label="Avg Correlation")
+        ax2.set_ylabel("Ratio / Correlation", color='#e0e0e0')
+        ax2.legend(loc='upper left', facecolor='#1e1e2e', edgecolor='#2a2a3a', labelcolor='#e0e0e0')
+        ax2.set_title("Systemic Risk Metrics", color='#e0e0e0', fontsize=12, fontweight='bold')
+        
+        # 3. Third Panel
+        if 'Absorption_Ratio_Garch' in corr_sub.columns:
+            ax3.plot(common_idx, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', linewidth=2, label="AR GARCH Residuals")
+            ax3.fill_between(common_idx, 0, corr_sub['Absorption_Ratio_Garch'], color='#FFD93D', alpha=0.1)
+        ax3.set_ylabel("GARCH Residual", color='#e0e0e0')
+        ax3.legend(loc='upper left', facecolor='#1e1e2e', edgecolor='#2a2a3a', labelcolor='#e0e0e0')
+        ax3.set_title("GARCH-Adjusted Absorption Ratio Shocks", color='#e0e0e0', fontsize=12, fontweight='bold')
+        
+        # 4. Bottom Panel
+        delta_vals = corr_sub['Eigenvalue_1_Delta'].fillna(0.0).values
+        bar_colors = ["#F44336" if d >= 0 else "#4CAF50" for d in delta_vals]
+        ax4.bar(common_idx, delta_vals, color=bar_colors, width=1.0)
+        ax4.set_ylabel("λ₁ Delta", color='#e0e0e0')
+        ax4.set_xlabel("Date", color='#e0e0e0')
+        ax4.set_title("Correlation Acceleration (λ₁ Delta)", color='#e0e0e0', fontsize=12, fontweight='bold')
+        
+        plt.suptitle(f"HMM Regime & Correlation Analysis — {sector}", color='#e0e0e0', fontsize=16, fontweight='bold')
+        plt.tight_layout()
+        plt.show()

@@ -50,7 +50,7 @@ coverage.xml
 .hypotheses/
 .pytest_cache/
 pytestdebug.log
-
+tests/
 # Translations
 *.mo
 *.pot

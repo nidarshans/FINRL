@@ -53,7 +53,7 @@ def train_hmm(features_df):
     scaled_data = scaler.fit_transform(features)
 
     model = GMMHMM(
-        n_components=3, n_mix=3,
+        n_components=3, n_mix=1,
         covariance_type="diag",
         min_covar=0.1,
         n_iter=HMM_ITER, random_state=42,
