@@ -35,8 +35,9 @@ def pipeline_add_garch(df: pl.DataFrame, metric) -> pl.DataFrame:
     """Stage 3: Calculates Pct Change and its GARCH Conditional Volatility."""
 
     # 1. First pass: Calculate the rolling percentage change of volume
-    df_with_pct = df.sort("Date").with_columns(
-        utils_rolling_pct_change(metric, n=1)
+    #    Partition by Ticker to prevent cross-ticker data leakage
+    df_with_pct = df.sort(["Ticker", "Date"]).with_columns(
+        utils_rolling_pct_change(metric, n=1).over("Ticker")
     )
 
     # 2. Second pass: Apply GARCH filter group-by-group to protect ticker isolation

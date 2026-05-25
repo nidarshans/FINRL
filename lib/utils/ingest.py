@@ -1,65 +1,211 @@
 from typing import List
+import yfinance as yf
 import pandas as pd
 import polars as pl
-import yfinance as yf
+from lib.utils.technical import *
 
 
 def pipeline_ingest_data(
-    tickers: List[str], start_date: str, end_date: str
+    tickers: List[str],
+    start_date: str,
+    end_date: str,
 ) -> pl.DataFrame:
-    """Stage 1 & 2 of the Quant Pipeline: Correctly flattens multi-ticker data
-
-    by stacking on the index, then cleans using Polars.
     """
-    # 1. Fetch data
+    Stage 1 & 2 of quant pipeline:
+    - Fetch OHLCV
+    - Flatten multi-index
+    - Clean missing values
+    - Append VWAP
+    """
+
+    # -----------------------------
+    # Fetch Data
+    # -----------------------------
+
     df_pandas = yf.download(
-        tickers, start=start_date, end=end_date, auto_adjust=True
+        tickers,
+        start=start_date,
+        end=end_date,
+        auto_adjust=True,
     )
 
-    # CRITICAL FIX: Ensure index is named Date, and stack BEFORE resetting index.
-    # This prevents the dates from turning into nulls.
     df_pandas.index.name = "Date"
 
-    if isinstance(df_pandas.columns, pd.MultiIndex):
-        # Stack 'Ticker' from columns to rows while keeping Date as the index
-        df_pandas = df_pandas.stack(level="Ticker", future_stack=True)
+    # -----------------------------
+    # Flatten MultiIndex
+    # -----------------------------
 
-    # Now reset the index to turn Date and Ticker into regular columns
+    if isinstance(df_pandas.columns, pd.MultiIndex):
+
+        df_pandas = df_pandas.stack(
+            level="Ticker",
+            future_stack=True,
+        )
+
     df_pandas = df_pandas.reset_index()
 
-    # Convert to Polars DataFrame
+    # -----------------------------
+    # Convert to Polars
+    # -----------------------------
+
     df = pl.from_pandas(df_pandas)
 
-    # Clean up names (yfinance sometimes leaves column names capitalized or lowercase)
-    # This maps whatever yfinance returns to standard OHLCV
+    # -----------------------------
+    # Normalize column names
+    # -----------------------------
+
     df = df.rename(
-        {col: col.title() for col in df.columns if col.title() in ["Volume"]}
+        {
+            col: col.title()
+            for col in df.columns
+        }
     )
 
-    # Cast Date to proper Polars Date type
-    df = df.with_columns(pl.col("Date").cast(pl.Date))
+    # -----------------------------
+    # Cast Date
+    # -----------------------------
 
-    # Ensure clean column structure
+    df = df.with_columns(
+        pl.col("Date").cast(pl.Date)
+    )
+
+    # -----------------------------
+    # Select canonical columns
+    # -----------------------------
+
     df = df.select(
-        ["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]
+        [
+            "Date",
+            "Ticker",
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+        ]
     )
 
-    # 2. Clean (Forward-fill then Backward-fill per Ticker)
+    # -----------------------------
+    # Clean missing values
+    # -----------------------------
+
+    cols_to_fill = ["Open", "High", "Low", "Close", "Volume"]
     cleaned_df = (
-        df.sort("Date")
-        .group_by("Ticker", maintain_order=True)
-        .agg(
+        df.sort(["Ticker", "Date"])
+        .with_columns(
             [
-                pl.col("Date"),
-                pl.col("Open").forward_fill().backward_fill(),
-                pl.col("High").forward_fill().backward_fill(),
-                pl.col("Low").forward_fill().backward_fill(),
-                pl.col("Close").forward_fill().backward_fill(),
-                pl.col("Volume").forward_fill().backward_fill(),
+                pl.col(c)
+                    .forward_fill()
+                    .backward_fill()
+                    .over("Ticker")
+                for c in cols_to_fill
             ]
         )
-        .explode(pl.all().exclude("Ticker"))
     )
 
-    # Return the clean dataframe sorted chronologically
-    return cleaned_df.sort("Ticker", "Date")
+    # -----------------------------
+    # Append VWAP
+    # -----------------------------
+
+    cleaned_df = append_monthly_vwap(cleaned_df)
+
+    return cleaned_df
+
+# ============================================================
+# 1. BUILD HIERARCHY MAPS
+# ============================================================
+
+def build_hierarchy_maps(
+    gics_dict: Dict
+):
+    """
+    Creates:
+
+        ticker -> sector
+        ticker -> industry
+
+    and:
+
+        sector -> tickers
+        industry -> tickers
+    """
+
+    ticker_to_sector = {}
+    ticker_to_industry = {}
+
+    sector_to_tickers = {}
+    industry_to_tickers = {}
+
+    for sector, industries in gics_dict.items():
+
+        sector_tickers = []
+
+        for industry, tickers in industries.items():
+
+            industry_unique = sorted(list(set(tickers)))
+
+            industry_to_tickers[industry] = industry_unique
+
+            for ticker in industry_unique:
+
+                ticker_to_sector[ticker] = sector
+                ticker_to_industry[ticker] = industry
+
+                sector_tickers.append(ticker)
+
+        sector_to_tickers[sector] = sorted(
+            list(set(sector_tickers))
+        )
+
+    return (
+        ticker_to_sector,
+        ticker_to_industry,
+        sector_to_tickers,
+        industry_to_tickers,
+    )
+
+
+# ============================================================
+# 2. CREATE FEATURE MATRIX
+# ============================================================
+
+def create_feature_matrix(
+    df: pl.DataFrame,
+    feature_col: str,
+):
+    """
+    Converts:
+
+        long-format dataframe
+
+    into:
+
+        X[T, N]
+    """
+
+    wide_df = (
+        df.pivot(
+            index="Date",
+            on="Ticker",
+            values=feature_col,
+            aggregate_function="first",
+        )
+        .sort("Date")
+    )
+
+    dates = wide_df["Date"].to_numpy()
+
+    tickers = [
+        c for c in wide_df.columns
+        if c != "Date"
+    ]
+
+    X = (
+        wide_df
+        .select(tickers)
+        .fill_null(strategy="forward")
+        .fill_null(0.0)
+        .to_numpy()
+    )
+
+    return X, tickers, dates

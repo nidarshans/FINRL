@@ -1,4 +1,5 @@
 import polars as pl
+import numpy as np
 
 def utils_standardize(
     col_name: str, rolling_window: int = None
@@ -30,3 +31,37 @@ def utils_rolling_pct_change(col_name: str, n: int = 1) -> pl.Expr:
             f"{col_name}_pct_chg_{n}d"
         )
     )
+
+def ewma_zscore(
+    X: np.ndarray,
+    span: int = 20,
+    eps: float = 1e-8,
+):
+    """
+    EWMA normalization.
+    """
+
+    alpha = 2 / (span + 1)
+
+    T, N = X.shape
+
+    mean = np.zeros((T, N))
+    var = np.zeros((T, N))
+
+    mean[0] = X[0]
+
+    for t in range(1, T):
+
+        mean[t] = (
+            alpha * X[t]
+            + (1 - alpha) * mean[t - 1]
+        )
+
+        var[t] = (
+            alpha * (X[t] - mean[t])**2
+            + (1 - alpha) * var[t - 1]
+        )
+
+    std = np.sqrt(var + eps)
+
+    return (X - mean) / std

@@ -1,183 +1,257 @@
 import numpy as np
 import polars as pl
 from typing import Dict, List
+from sklearn.covariance import LedoitWolf
+from numpy.linalg import eigvalsh
 
+from lib.utils.ingest import build_hierarchy_maps, create_feature_matrix
+from lib.utils.utils import ewma_zscore
 
-def utils_calculate_covariance_matrix(
-    df: pl.DataFrame, column: str = None
-) -> pl.DataFrame:
-    """Pivots the DataFrame into wide format and returns its cross-ticker covariance matrix."""
-    # Use override if provided, otherwise default to the GARCH string
-    target_col = column
-
-    wide_df = df.pivot(
-        index="Date",
-        on="Ticker",
-        values=target_col,
-        aggregate_function="first",
-    )
-
-    ticker_names = [col for col in wide_df.columns if col != "Date"]
-    cleaned_wide = wide_df.select(ticker_names).drop_nulls()
-    matrix_data = cleaned_wide.to_numpy()
-
-    if matrix_data.shape[0] <= 1:
-        raise ValueError("No overlapping data points left after dropping nulls.")
-
-    cov_array = np.cov(matrix_data.T)
-    cov_array = np.atleast_2d(cov_array)
-
-    cov_df = pl.DataFrame(cov_array, schema=ticker_names)
-    return cov_df.insert_column(0, pl.Series("Ticker", ticker_names))
-
-
-def utils_calculate_correlation_matrix(
-    df: pl.DataFrame, column: str = None
-) -> pl.DataFrame:
-    """Pivots the DataFrame into wide format and returns its cross-ticker correlation matrix."""
-    target_col = column
-
-    wide_df = df.pivot(
-        index="Date",
-        on="Ticker",
-        values=target_col,
-        aggregate_function="first",
-    )
-
-    ticker_names = [col for col in wide_df.columns if col != "Date"]
-    cleaned_wide = wide_df.select(ticker_names).drop_nulls()
-    matrix_data = cleaned_wide.to_numpy()
-
-    if matrix_data.shape[0] <= 1:
-        raise ValueError("No overlapping data points left after dropping nulls.")
-
-    corr_array = np.corrcoef(matrix_data.T)
-    corr_array = np.atleast_2d(corr_array)
-
-    corr_df = pl.DataFrame(corr_array, schema=ticker_names)
-    return corr_df.insert_column(0, pl.Series("Ticker", ticker_names))
-
-def utils_calculate_eigenvalues(cov_df: pl.DataFrame) -> pl.DataFrame:
-    """Takes a Polars covariance matrix DataFrame, calculates its eigenvalues,
-
-    and returns them sorted in descending order.
+def rolling_correlation_matrices(
+    X: np.ndarray,
+    window: int = 60,
+):
     """
-    # 1. Drop the 'Ticker' label column to get a pure numeric matrix
-    ticker_names = [col for col in cov_df.columns if col != "Ticker"]
-    matrix_data = cov_df.select(ticker_names).to_numpy()
+    Returns:
 
-    # 2. Compute eigenvalues
-    # Since covariance matrices are symmetric, eigvalsh is faster and more stable than eigvals
-    eigenvalues = np.linalg.eigvalsh(matrix_data)
-
-    # 3. Sort eigenvalues descending (highest variance/principal components first)
-    eigenvalues = eigenvalues[::-1]
-
-    # 4. Return as a clean Polars DataFrame
-    return pl.DataFrame(
-        {
-            "Component": [f"PC_{i+1}" for i in range(len(eigenvalues))],
-            "Eigenvalue": eigenvalues,
-        }
-    )
-
-def pipeline_rolling_subsector_eigenvalues(
-    df_features: pl.DataFrame,
-    gics_dict: Dict[str, Dict[str, List[str]]],
-    column: str,
-    lookback_window: int,
-    method: str = "correlation",
-) -> pl.DataFrame:
-    """Computes a historical time-series of PC1 and PC2 eigenvalues
-
-    individually for EVERY GICS subsector in the dataset using an optimized
-    matrix execution loop.
+        corr_matrices[T, N, N]
     """
-    # 1. Flatten the GICS dictionary structure into a high-performance metadata table
-    flat_gics = []
-    for sector, subsectors in gics_dict.items():
-        for subsector, tickers in subsectors.items():
-            for t in tickers:
-                flat_gics.append((t, sector, subsector))
 
-    df_meta = pl.DataFrame(
-        flat_gics, schema=["Ticker", "Sector", "Sub_Industry"]
+    T, N = X.shape
+
+    matrices = []
+
+    for t in range(window, T + 1):
+
+        W = X[t - window:t]
+
+        C = np.corrcoef(W.T)
+
+        C = np.nan_to_num(C)
+
+        matrices.append(C)
+
+    return np.stack(matrices)
+
+def spectral_features_from_matrix(
+    C: np.ndarray
+):
+    """
+    Computes spectral descriptors.
+    """
+
+    eigenvalues = eigvalsh(C)
+
+    eigenvalues = np.clip(
+        eigenvalues,
+        1e-12,
+        None
     )
 
-    # 2. Join asset metadata onto the core features dataframe
-    # This labels every historical data point with its specific subsector
-    df_labeled = df_features.join(df_meta, on="Ticker", how="inner")
+    eigenvalues = np.sort(eigenvalues)[::-1]
 
-    # Get unique, chronologically sorted dates and identify active subsectors
-    unique_dates = df_labeled["Date"].unique().sort()
-    total_days = len(unique_dates)
-    subsectors_list = df_meta["Sub_Industry"].unique().to_list()
+    # --------------------------------------------------------
+    # Largest Eigenvalue
+    # --------------------------------------------------------
 
-    if total_days < lookback_window:
-        raise ValueError(
-            f"Dataset length ({total_days} days) is less than the lookback window ({lookback_window})."
+    lambda1 = eigenvalues[0]
+
+    # --------------------------------------------------------
+    # Spectral Gap
+    # --------------------------------------------------------
+
+    if len(eigenvalues) > 1:
+        spectral_gap = (
+            eigenvalues[0]
+            - eigenvalues[1]
         )
+    else:
+        spectral_gap = 0.0
 
-    # Accumulator for our final long-form panel output dataset
-    all_subsector_results = []
+    # --------------------------------------------------------
+    # Spectral Entropy
+    # --------------------------------------------------------
 
-    # 3. Time-Timeline Vectorized Windowing
-    # We step through time chronologically, capturing the required lookback chunk
-    for i in range(lookback_window, total_days + 1):
-        window_dates = unique_dates[i - lookback_window : i]
-        current_date = window_dates[-1]
+    p = eigenvalues / eigenvalues.sum()
 
-        # Isolate the cross-sectional rows belonging strictly to this time window
-        window_df = df_labeled.filter(pl.col("Date").is_in(window_dates))
+    spectral_entropy = -np.sum(
+        p * np.log(p)
+    )
 
-        # 4. Intra-Window Subsector Slicing
-        for subsector in subsectors_list:
-            subsector_df = window_df.filter(
-                pl.col("Sub_Industry") == subsector
+    # --------------------------------------------------------
+    # Participation Ratio
+    # --------------------------------------------------------
+
+    participation_ratio = (
+        np.sum(eigenvalues)**2
+        /
+        np.sum(eigenvalues**2)
+    )
+
+    return {
+        "largest_eigenvalue": lambda1,
+        "spectral_gap": spectral_gap,
+        "spectral_entropy": spectral_entropy,
+        "participation_ratio": participation_ratio,
+    }
+
+def compute_hierarchical_spectral_features(
+    corr_matrices: np.ndarray,
+    dates,
+    tickers: List[str],
+    gics_dict: Dict,
+):
+    """
+    Computes:
+
+        - global spectral features
+        - sector spectral features
+        - industry spectral features
+    """
+
+    (
+        ticker_to_sector,
+        ticker_to_industry,
+        sector_to_tickers,
+        industry_to_tickers,
+    ) = build_hierarchy_maps(gics_dict)
+
+    ticker_to_idx = {
+        t: i
+        for i, t in enumerate(tickers)
+    }
+
+    # Precompute indices outside the time loop to save redundant computations
+    valid_sectors = {}
+    for sector, sector_tickers in sector_to_tickers.items():
+        idx = [ticker_to_idx[t] for t in sector_tickers if t in ticker_to_idx]
+        if len(idx) >= 2:
+            valid_sectors[sector] = idx
+
+    valid_industries = {}
+    for industry, industry_tickers in industry_to_tickers.items():
+        idx = [ticker_to_idx[t] for t in industry_tickers if t in ticker_to_idx]
+        if len(idx) >= 2:
+            valid_industries[industry] = idx
+
+    rows = []
+
+    # ========================================================
+    # LOOP OVER TIME
+    # ========================================================
+
+    for t_idx, C in enumerate(corr_matrices):
+
+        date = dates[t_idx]
+
+        # ====================================================
+        # GLOBAL FEATURES
+        # ====================================================
+
+        global_features = spectral_features_from_matrix(C)
+
+        rows.append({
+            "Date": date,
+            "Level": "global",
+            "Group": "ALL",
+            **global_features
+        })
+
+        # ====================================================
+        # SECTOR FEATURES
+        # ====================================================
+
+        for sector, idx in valid_sectors.items():
+
+            C_sector = C[np.ix_(idx, idx)]
+
+            features = spectral_features_from_matrix(
+                C_sector
             )
 
-            # Skip subsectors that don't have enough active tickers in this timeframe
-            unique_tickers = subsector_df["Ticker"].n_unique()
-            if unique_tickers < 2:
-                continue
+            rows.append({
+                "Date": date,
+                "Level": "sector",
+                "Group": sector,
+                **features
+            })
 
-            try:
-                # Reuse your mathematical matrix functions
-                if method.lower() == "covariance":
-                    matrix_df = utils_calculate_covariance_matrix(
-                        subsector_df, column=column
-                    )
-                else:
-                    matrix_df = utils_calculate_correlation_matrix(
-                        subsector_df, column=column
-                    )
+        # ====================================================
+        # INDUSTRY FEATURES
+        # ====================================================
 
-                # Extract eigenvalues
-                eigen_df = utils_calculate_eigenvalues(matrix_df)
+        for industry, idx in valid_industries.items():
 
-                pc1 = (
-                    eigen_df["Eigenvalue"][0] if len(eigen_df) >= 1 else np.nan
-                )
-                pc2 = (
-                    eigen_df["Eigenvalue"][1] if len(eigen_df) >= 2 else np.nan
-                )
+            C_industry = C[np.ix_(idx, idx)]
 
-            except (ValueError, LinAlgError):
-                # Catches matrices collapsed by missing data or singular transformations
-                pc1, pc2 = np.nan, np.nan
-
-            # Append the data point tied to its time and subsector coordinates
-            all_subsector_results.append(
-                {
-                    "Date": current_date,
-                    "Sub_Industry": subsector,
-                    f"{column}_PC1": pc1,
-                    f"{column}_PC2": pc2,
-                }
+            features = spectral_features_from_matrix(
+                C_industry
             )
 
-    # 5. Compile into a master long-form panel DataFrame
-    if not all_subsector_results:
-        return pl.DataFrame()
+            rows.append({
+                "Date": date,
+                "Level": "industry",
+                "Group": industry,
+                **features
+            })
 
-    return pl.DataFrame(all_subsector_results).sort(["Sub_Industry", "Date"])
+    return pl.DataFrame(rows)
+
+def pipeline_hierarchical_spectral_features(
+    df: pl.DataFrame,
+    gics_dict: Dict,
+    feature_col: str,
+    ewma_span: int = 20,
+    corr_window: int = 60,
+):
+    """
+    Full hierarchical spectral pipeline.
+    """
+
+    # --------------------------------------------------------
+    # FEATURE MATRIX
+    # --------------------------------------------------------
+
+    X, tickers, dates = create_feature_matrix(
+        df=df,
+        feature_col=feature_col,
+    )
+
+    # --------------------------------------------------------
+    # EWMA NORMALIZATION
+    # --------------------------------------------------------
+
+    X_norm = ewma_zscore(
+        X,
+        span=ewma_span,
+    )
+
+    # --------------------------------------------------------
+    # ROLLING CORRELATION MATRICES
+    # --------------------------------------------------------
+
+    corr_matrices = rolling_correlation_matrices(
+        X_norm,
+        window=corr_window,
+    )
+
+    # --------------------------------------------------------
+    # ALIGN DATES
+    # --------------------------------------------------------
+
+    aligned_dates = dates[corr_window - 1:]
+
+    # --------------------------------------------------------
+    # HIERARCHICAL SPECTRAL FEATURES
+    # --------------------------------------------------------
+
+    hierarchical_df = (
+        compute_hierarchical_spectral_features(
+            corr_matrices=corr_matrices,
+            dates=aligned_dates,
+            tickers=tickers,
+            gics_dict=gics_dict,
+        )
+    )
+
+    return hierarchical_df
