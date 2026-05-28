@@ -289,8 +289,8 @@ def append_rsi(
     price_col: str = "Close",
     ticker_col: str = "Ticker",
     date_col: str = "Date",
-    period: int = 14,
-    output_col: str = "RSI_14",
+    period: int = 20,
+    output_col: str = "RSI_20",
 ) -> pl.DataFrame:
     """
     Adds RSI to a multi-ticker OHLCV dataframe.

@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import polars as pl
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pandas as pd
 
 def plot_price_vs_vwap(
@@ -108,8 +109,7 @@ def plot_price_vs_amihud(
         df.filter(pl.col("Ticker") == ticker)
         .sort("Date")
         .with_columns([
-            ((pl.col("Close") - pl.col("Close").mean()) / pl.col("Close").std()).alias("Close_Z"),
-            ((pl.col(ratio_col) - pl.col(ratio_col).mean()) / pl.col(ratio_col).std()).alias("Ratio_Z"),
+            ((pl.col("Close") - pl.col("Close").mean()) / pl.col("Close").std()).alias("Close_Z")
         ])
         .to_pandas()
     )
@@ -128,7 +128,7 @@ def plot_price_vs_amihud(
     fig.add_trace(
         go.Scatter(
             x=ticker_df["Date"],
-            y=ticker_df["Ratio_Z"],
+            y=ticker_df[ratio_col],
             name=f"Amihud {short_window}d/{long_window}d (z-score)",
             line=dict(color="#D85A30", width=1.5, dash="dot"),
         )
@@ -155,24 +155,146 @@ def plot_price_vs_amihud(
 
     return fig
 
-def plot_hmm_regimes(ticker_df, ticker_name):
-    fig, ax = plt.subplots(figsize=(14, 7))
-
-    # Convert to pandas for easier plotting with colored segments
+def plot_hmm_regimes(ticker_df, ticker_name) -> go.Figure:
+    # Convert to pandas for easier plotting with datetime handling
     pdf = ticker_df.to_pandas()
     pdf['Date'] = pd.to_datetime(pdf['Date'])
 
-    colors = ['blue', 'red', 'green']
-    labels = ['Regime 0', 'Regime 1', 'Regime 2']
+    # Dynamically find regime probability columns
+    prob_cols = sorted([col for col in pdf.columns if col.startswith('Regime_Prob_')])
+    num_regimes = len(prob_cols)
+    
+    if num_regimes > 0:
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.08,
+            subplot_titles=(f"{ticker_name} Close Price with Overlaid Regimes", "Regime Probabilities Over Time")
+        )
+        
+        # Plot Close Price base line on Row 1 (in a clean slate gray)
+        fig.add_trace(
+            go.Scatter(
+                x=pdf['Date'],
+                y=pdf['Close'],
+                name="Close Price",
+                line=dict(color="#7F8C8D", width=1.5),
+            ),
+            row=1, col=1
+        )
+        
+        # Plot Regime Probabilities and Overlay Markers
+        colors = ["#2ECC71", "#E74C3C", "#9B59B6", "#F1C40F", "#1ABC9C", "#E67E22"]
+        for idx, col in enumerate(prob_cols):
+            color = colors[idx % len(colors)]
+            
+            # Identify periods where this regime is the predicted argmax active state
+            regime_mask = pdf['Regime'] == idx
+            regime_df = pdf[regime_mask]
+            
+            # Overlay Regime i markers on Close Price plot (Row 1)
+            fig.add_trace(
+                go.Scatter(
+                    x=regime_df['Date'],
+                    y=regime_df['Close'],
+                    mode='markers',
+                    name=f"Regime {idx} Price Markers",
+                    marker=dict(color=color, size=5.5, opacity=0.85),
+                    legendgroup=f"Regime {idx}",
+                    showlegend=False
+                ),
+                row=1, col=1
+            )
+            
+            # Plot Regime i Probability line on Row 2
+            fig.add_trace(
+                go.Scatter(
+                    x=pdf['Date'],
+                    y=pdf[col],
+                    name=f"Regime {idx} Prob",
+                    line=dict(color=color, width=1.8),
+                    legendgroup=f"Regime {idx}",
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
+            
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Probability", range=[-0.05, 1.05], row=2, col=1)
+    else:
+        # Fallback to standard 2-subplot layout if no probability columns exist
+        unique_regimes = sorted(pdf['Regime'].unique())
+        num_unique = len(unique_regimes)
+        
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.08,
+            subplot_titles=(f"{ticker_name} Close Price with Overlaid Regimes", f"Market Regime Classification")
+        )
+        
+        # Plot Close Price on Row 1
+        fig.add_trace(
+            go.Scatter(
+                x=pdf['Date'],
+                y=pdf['Close'],
+                name="Close Price",
+                line=dict(color="#7F8C8D", width=1.5),
+            ),
+            row=1, col=1
+        )
+        
+        # Plot step Regime on Row 2
+        fig.add_trace(
+            go.Scatter(
+                x=pdf['Date'],
+                y=pdf['Regime'],
+                name="Regime Class",
+                line=dict(color="#34495E", width=2, shape="hv"),
+            ),
+            row=2, col=1
+        )
+        
+        # Plot markers on Row 1 for each unique regime using a matplotlib colormap converted to hex
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+        cmap = plt.colormaps.get_cmap('tab10' if num_unique <= 10 else 'tab20')
+        colors = [cmap(i) for i in np.linspace(0, 1, num_unique)]
+        
+        for idx, r in enumerate(unique_regimes):
+            hex_color = mcolors.to_hex(colors[idx])
+            regime_df = pdf[pdf['Regime'] == r]
+            fig.add_trace(
+                go.Scatter(
+                    x=regime_df['Date'],
+                    y=regime_df['Close'],
+                    mode='markers',
+                    name=f"Regime {r} Price Markers",
+                    marker=dict(color=hex_color, size=5.5, opacity=0.85),
+                    legendgroup=f"Regime {r}",
+                    showlegend=False
+                ),
+                row=1, col=1
+            )
+        
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Regime Class", row=2, col=1)
 
-    for i in range(3):
-        mask = pdf['Regime'] == i
-        ax.scatter(pdf.loc[mask, 'Date'], pdf.loc[mask, 'Close'],
-                   c=colors[i], label=labels[i], s=10, alpha=0.8)
+    # Style Layout
+    fig.update_layout(
+        title=dict(text=f"HMM Market Regime Analysis — {ticker_name}", font_size=16, x=0.5, font=dict(weight="bold")),
+        height=650,
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.03, x=0, yanchor="bottom"),
+        margin=dict(l=60, r=40, t=80, b=40),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+    
+    # Configure grids and axes
+    fig.update_xaxes(showgrid=True, gridcolor="#EBEBEB", row=1, col=1)
+    fig.update_xaxes(showgrid=True, gridcolor="#EBEBEB", title_text="Date", row=2, col=1)
+    fig.update_yaxes(showgrid=True, gridcolor="#EBEBEB", row=1, col=1)
+    fig.update_yaxes(showgrid=True, gridcolor="#EBEBEB", row=2, col=1)
 
-    ax.plot(pdf['Date'], pdf['Close'], color='black', alpha=0.3, linewidth=1)
-    ax.set_title(f'Market Regime Classification for {ticker_name}', fontsize=16)
-    ax.set_ylabel('Price ($)')
-    ax.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
+    return fig
