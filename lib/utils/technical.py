@@ -1,6 +1,7 @@
 import polars as pl
 
 def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
+
     """
     Engineers Klinger Volume Oscillator (KVO) and MACD signals,
     returning a primary Boolean flag column: 'Signal_KVO_MACD_Bullish'.
@@ -80,7 +81,6 @@ def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
 
     return df_final.drop(columns_to_drop)
 
-
 def append_vwap(
     df: pl.DataFrame,
     high_col: str = "High",
@@ -117,7 +117,6 @@ def append_vwap(
             ).alias(vwap_col)
         )
     )
-
 
 def append_monthly_vwap(
     df: pl.DataFrame,
@@ -216,3 +215,265 @@ def add_ew_volume_roc(
         )
         .drop("__volume_roc")
     )
+
+def append_panel_rolling_amihud(df: pl.DataFrame, window_size: int = 5) -> pl.DataFrame:
+    """
+    Calculates the rolling Amihud Illiquidity Ratio across a stacked multi-ticker
+    panel DataFrame using HL2 dollar volume, safely handling zero-volume anomalies.
+    """
+    # 1. Calculate absolute returns (Requires .over() because it looks at the previous row)
+    abs_return_expr = pl.col("Close").pct_change().abs().over("Ticker")
+
+    # 2. Calculate HL2 Dollar Volume (No .over() needed; purely horizontal arithmetic)
+    hl2_price = (pl.col("High") + pl.col("Low")) / 2
+    dollar_volume_expr = hl2_price * pl.col("Volume")
+
+    # 3. Combine expressions safely handling zero-volume edge cases
+    raw_amihud_expr = (
+        pl.when(pl.col("Volume") > 0)
+        .then((abs_return_expr / dollar_volume_expr) * 1_000_000)
+        .otherwise(None) # Prevents division by zero, casting to Null safely ignored by rolling_mean
+        .alias("Amihud_Raw")
+    )
+
+    # 4. Append the raw column
+    df_with_raw = df.with_columns(raw_amihud_expr)
+
+    # 5. Compute rolling window safely isolated over each Ticker context
+    rolling_name = f"Amihud_{window_size}d"
+    result_df = df_with_raw.with_columns(
+        pl.col("Amihud_Raw")
+        .rolling_mean(window_size=window_size)
+        .over("Ticker")
+        .alias(rolling_name)
+    )
+
+    return result_df
+
+def append_log_returns(
+    df: pl.DataFrame,
+    price_col: str = "Close",
+    ticker_col: str = "Ticker",
+    output_col: str = "Log_Return",
+) -> pl.DataFrame:
+    """
+    Appends log returns to an OHLCV dataframe.
+
+    Formula:
+
+        r_t = log(P_t) - log(P_{t-1})
+
+    Assumes dataframe contains:
+        - Date
+        - Ticker
+        - OHLCV columns
+
+    Returns:
+        Original dataframe with appended log return column.
+    """
+
+    return (
+        df.sort([ticker_col, "Date"])
+        .with_columns(
+            (
+                pl.col(price_col)
+                .log()
+                .diff()
+                .over(ticker_col)
+            ).alias(output_col)
+        )
+    )
+
+def append_rsi(
+    df: pl.DataFrame,
+    price_col: str = "Close",
+    ticker_col: str = "Ticker",
+    date_col: str = "Date",
+    period: int = 14,
+    output_col: str = "RSI_14",
+) -> pl.DataFrame:
+    """
+    Adds RSI to a multi-ticker OHLCV dataframe.
+
+    Uses Wilder-style exponential smoothing.
+
+    Formula:
+        RSI = 100 - 100 / (1 + RS)
+
+    where:
+        RS = avg_gain / avg_loss
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Long-format OHLCV dataframe.
+
+    price_col : str
+        Price column.
+
+    ticker_col : str
+        Ticker identifier column.
+
+    date_col : str
+        Date column.
+
+    period : int
+        RSI lookback period.
+
+    output_col : str
+        Output RSI column name.
+
+    Returns
+    -------
+    pl.DataFrame
+    """
+
+    alpha = 1 / period
+
+    return (
+        df
+        .sort([ticker_col, date_col])
+
+        # ----------------------------------------------------
+        # Price Delta
+        # ----------------------------------------------------
+
+        .with_columns(
+            pl.col(price_col)
+            .diff()
+            .over(ticker_col)
+            .alias("__delta")
+        )
+
+        # ----------------------------------------------------
+        # Gains / Losses
+        # ----------------------------------------------------
+
+        .with_columns([
+            (
+                pl.when(pl.col("__delta") > 0)
+                .then(pl.col("__delta"))
+                .otherwise(0.0)
+            ).alias("__gain"),
+
+            (
+                pl.when(pl.col("__delta") < 0)
+                .then(-pl.col("__delta"))
+                .otherwise(0.0)
+            ).alias("__loss"),
+        ])
+
+        # ----------------------------------------------------
+        # Wilder EWMA
+        # ----------------------------------------------------
+
+        .with_columns([
+            (
+                pl.col("__gain")
+                .ewm_mean(alpha=alpha)
+                .over(ticker_col)
+            ).alias("__avg_gain"),
+
+            (
+                pl.col("__loss")
+                .ewm_mean(alpha=alpha)
+                .over(ticker_col)
+            ).alias("__avg_loss"),
+        ])
+
+        # ----------------------------------------------------
+        # RSI
+        # ----------------------------------------------------
+
+        .with_columns(
+            (
+                100
+                -
+                (
+                    100
+                    /
+                    (
+                        1
+                        +
+                        (
+                            pl.col("__avg_gain")
+                            /
+                            (pl.col("__avg_loss") + 1e-12)
+                        )
+                    )
+                )
+            ).alias(output_col)
+        )
+
+        # ----------------------------------------------------
+        # Cleanup
+        # ----------------------------------------------------
+
+        .drop([
+            "__delta",
+            "__gain",
+            "__loss",
+            "__avg_gain",
+            "__avg_loss",
+        ])
+    )
+
+def append_panel_rolling_amihud_ratio(
+    df: pl.DataFrame,
+    short_window: int = 5,
+    long_window: int = 20
+) -> pl.DataFrame:
+    """
+    Calculates the short-term and long-term EWMA Amihud Illiquidity Ratios
+    across a stacked multi-ticker panel DataFrame, and appends their ratio
+    (short_window / long_window) while safely handling zero or null anomalies.
+    """
+    # 1. Calculate absolute returns (Requires .over() because it looks at the previous row)
+    abs_return_expr = pl.col("Close").pct_change().abs().over("Ticker")
+
+    # 2. Calculate HL2 Dollar Volume (No .over() needed; purely horizontal arithmetic)
+    hl2_price = (pl.col("High") + pl.col("Low")) / 2
+    dollar_volume_expr = hl2_price * pl.col("Volume")
+
+    # 3. Combine expressions safely handling zero-volume edge cases
+    raw_amihud_expr = (
+        pl.when(pl.col("Volume") > 0)
+        .then((abs_return_expr / dollar_volume_expr) * 1_000_000)
+        .otherwise(None) # Prevents division by zero
+        .alias("Amihud_Raw")
+    )
+
+    # 4. Append the raw column
+    df_with_raw = df.with_columns(raw_amihud_expr)
+
+    # 5. Compute both EWMA windows safely isolated over each Ticker context
+    short_name = f"Amihud_{short_window}d_EWMA"
+    long_name = f"Amihud_{long_window}d_EWMA"
+    ratio_name = f"Amihud_{short_window}d_{long_window}d_Ratio"
+
+    df_with_windows = df_with_raw.with_columns([
+        pl.col("Amihud_Raw")
+        .ewm_mean(span=short_window, ignore_nulls=True)
+        .over("Ticker")
+        .alias(short_name),
+
+        pl.col("Amihud_Raw")
+        .ewm_mean(span=long_window, ignore_nulls=True)
+        .over("Ticker")
+        .alias(long_name),
+    ])
+
+    # 6. Safely compute the ratio to prevent division-by-zero if long_window is 0 or Null
+    result_df = df_with_windows.with_columns(
+        pl.when(pl.col(long_name) > 0)
+        .then(pl.col(short_name) / pl.col(long_name))
+        .otherwise(None)
+        .alias(ratio_name)
+    )
+
+    # 7. Add pct change of ratio (Requires .over() for panel compliance)
+    result_df = result_df.with_columns(
+        pl.col(ratio_name).pct_change().over("Ticker").alias(f"{ratio_name}_Pct_Change")
+    )
+
+    return result_df

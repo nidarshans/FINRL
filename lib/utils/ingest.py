@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict
 import yfinance as yf
 import pandas as pd
 import polars as pl

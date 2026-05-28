@@ -1,25 +1,14 @@
 import polars as pl
 import numpy as np
 
-def utils_standardize(
-    col_name: str, rolling_window: int = None
-) -> pl.Expr:
-    """Returns a Polars expression to Z-score standardize a column.
-
-    If rolling_window is provided, computes a rolling Z-score.
-    """
-    col = pl.col(col_name)
-
-    if rolling_window:
-        # Prevent look-ahead bias with a moving window
-        mean = col.rolling_mean(window_size=rolling_window)
-        std = col.rolling_std(window_size=rolling_window)
-    else:
-        # Global calculation
-        mean = col.mean()
-        std = col.std()
-
-    return ((col - mean) / std).alias(f"{col_name}_zscore")
+def utils_standardize_rolling(df: pl.DataFrame, columns: list, window: int) -> pl.DataFrame:
+    """Standardizes the specified columns using rolling z-score normalization over each Ticker."""
+    return df.with_columns([
+        ((
+            pl.col(c) - pl.col(c).rolling_mean(window).over("Ticker")
+        ) / pl.col(c).rolling_std(window).over("Ticker")).alias(c)
+        for c in columns
+    ])
 
 def utils_rolling_pct_change(col_name: str, n: int = 1) -> pl.Expr:
     """Returns a Polars expression calculating percentage change over 'n' periods.
