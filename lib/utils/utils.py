@@ -1,14 +1,36 @@
 import polars as pl
 import numpy as np
 
-def utils_standardize_rolling(df: pl.DataFrame, columns: list, window: int) -> pl.DataFrame:
-    """Standardizes the specified columns using rolling z-score normalization over each Ticker."""
-    return df.with_columns([
+def utils_standardize_rolling(
+    df: pl.DataFrame,
+    ticker_columns: dict[str, int],   # {col: window}
+    market_columns: dict[str, int],   # {col: window} — no over("Ticker")
+    min_periods: int | None = None,
+) -> pl.DataFrame:
+    """
+    Roll-wise standardization per ticker + market-wide normalization.
+
+    - For ticker_columns: rolling z-score per ticker.
+    - For market_columns: rolling z-score on the whole column (no over("Ticker")).
+    """
+
+    ticker_exprs = [
         ((
-            pl.col(c) - pl.col(c).rolling_mean(window).over("Ticker")
-        ) / pl.col(c).rolling_std(window).over("Ticker")).alias(c)
-        for c in columns
-    ])
+            pl.col(c) - pl.col(c).rolling_mean(w, min_periods=min_periods or w).over("Ticker")
+        ) / pl.col(c).rolling_std(w, min_periods=min_periods or w).over("Ticker")
+        ).alias(c)
+        for c, w in ticker_columns.items()
+    ]
+
+    market_exprs = [
+        ((
+            pl.col(c) - pl.col(c).rolling_mean(w, min_periods=min_periods or w)
+        ) / pl.col(c).rolling_std(w, min_periods=min_periods or w)
+        ).alias(c)
+        for c, w in market_columns.items()
+    ]
+
+    return df.with_columns(ticker_exprs)
 
 def utils_rolling_pct_change(col_name: str, n: int = 1) -> pl.Expr:
     """Returns a Polars expression calculating percentage change over 'n' periods.

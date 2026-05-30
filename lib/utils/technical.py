@@ -1,85 +1,96 @@
 import polars as pl
+import pandas as pd
+import pandas_ta_classic as pta
+
 
 def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
-
     """
-    Engineers Klinger Volume Oscillator (KVO) and MACD signals,
-    returning a primary Boolean flag column: 'Signal_KVO_MACD_Bullish'.
+    Engineers MACD and Klinger Volume Oscillator signals.
 
-    Assumes df is a long-form panel sorted by ['Ticker', 'Date']
-    containing columns: 'Open', 'High', 'Low', 'Close', 'Volume'.
+    Returns:
+        MACD
+        MACD_Signal
+        KVO
+        Klinger_Signal
+        Signal_KVO_MACD_Bullish
     """
 
-    # -------------------------------------------------------------
-    # LAYER 1: MACD CALCULATION
-    # -------------------------------------------------------------
-    # MACD Line = EMA(Close, 12) - EMA(Close, 26)
-    # Signal Line = EMA(MACD Line, 9)
-    df_macd = df.with_columns([
-        pl.col("Close").ewm_mean(span=12, adjust=False).over("Ticker").alias("EMA_12"),
-        pl.col("Close").ewm_mean(span=26, adjust=False).over("Ticker").alias("EMA_26")
-    ]).with_columns([
-        (pl.col("EMA_12") - pl.col("EMA_26")).alias("MACD_Line")
-    ]).with_columns([
-        pl.col("MACD_Line").ewm_mean(span=9, adjust=False).over("Ticker").alias("MACD_Signal")
-    ])
+    feature_frames = []
 
-    # -------------------------------------------------------------
-    # LAYER 2: KLINGER VOLUME OSCILLATOR (KVO) CALCULATION
-    # -------------------------------------------------------------
-    # 1. Typical Price (TP) = (High + Low + Close) / 3
-    # 2. Daily Force (VF) = Volume * Trend * 100, where Trend is based on TP movement
-    df_kvo = df_macd.with_columns([
-        ((pl.col("High") + pl.col("Low") + pl.col("Close")) / 3.0).alias("Typical_Price"),
-        (pl.col("High") - pl.col("Low")).alias("Daily_Range")
-    ]).with_columns([
-        # Determine DM (Daily Trend Direction)
-        pl.when(pl.col("Typical_Price") >= pl.col("Typical_Price").shift(1).over("Ticker"))
-          .then(1)
-          .otherwise(-1)
-          .alias("Trend_Direction")
-    ]).with_columns([
-        # Cumulative Range (cm): rolling sum of daily ranges as a robust
-        # approximation of Klinger's original cumulative range variable
-        pl.col("Daily_Range").rolling_sum(window_size=10).over("Ticker").alias("Cumulative_Range")
-    ]).with_columns([
-        # Compute Volume Force (VF) using Klinger's dm/cm scaling
-        pl.when(pl.col("Daily_Range") == 0)
-          .then(0.0)
-          .when(pl.col("Cumulative_Range") == 0)
-          .then(0.0)
-          .otherwise(
-              pl.col("Volume") * pl.col("Trend_Direction") * 100.0 *
-              ((2.0 * ((pl.col("High") - pl.col("Low")) / pl.col("Cumulative_Range"))) - 1.0)
-          ).alias("Volume_Force")
-    ]).with_columns([
-        # Klinger Line = EMA(Volume Force, 34) - EMA(Volume Force, 55)
-        pl.col("Volume_Force").ewm_mean(span=34, adjust=False).over("Ticker").alias("VF_EMA_34"),
-        pl.col("Volume_Force").ewm_mean(span=55, adjust=False).over("Ticker").alias("VF_EMA_55")
-    ]).with_columns([
-        (pl.col("VF_EMA_34") - pl.col("VF_EMA_55")).alias("Klinger_Line")
-    ]).with_columns([
-        # Klinger Signal Line = EMA(Klinger Line, 13)
-        pl.col("Klinger_Line").ewm_mean(span=13, adjust=False).over("Ticker").alias("Klinger_Signal")
-    ])
+    for group in df.partition_by("Ticker", maintain_order=True):
 
-    # -------------------------------------------------------------
-    # LAYER 3: CONSTRUCT THE BOOLEAN FEATURE
-    # -------------------------------------------------------------
-    # True if BOTH Signal Lines >= 0, else False
-    df_final = df_kvo.with_columns([
-        (pl.col("MACD_Signal") >= 0.0).alias("Signal_MACD_Bullish"),
-        (pl.col("Klinger_Signal") >= 0.0).alias("Signal_KVO_Bullish")
-    ])
+        pdf = group.to_pandas()
 
-    # Drop intermediary columns to keep your machine learning data clear and compact
-    columns_to_drop = [
-        "EMA_12", "EMA_26", "MACD_Line", "Typical_Price",
-        "Daily_Range", "Cumulative_Range", "Trend_Direction", "Volume_Force",
-        "VF_EMA_34", "VF_EMA_55", "Klinger_Line"
-    ]
+        # -------------------------
+        # MACD
+        # -------------------------
+        macd = pta.macd(
+            pdf["Close"],
+            fast=12,
+            slow=26,
+            signal=9,
+        )
 
-    return df_final.drop(columns_to_drop)
+        macd_col = macd.filter(regex=r"^MACD_").columns[0]
+        signal_col = macd.filter(regex=r"^MACDs_").columns[0]
+
+        pdf["MACD"] = macd[macd_col]
+        pdf["MACD_Signal"] = macd[signal_col]
+
+        # -------------------------
+        # Klinger Volume Oscillator
+        # -------------------------
+        kvo = pta.kvo(
+            high=pdf["High"],
+            low=pdf["Low"],
+            close=pdf["Close"],
+            volume=pdf["Volume"],
+            fast=34,
+            slow=55,
+            signal=13,
+        )
+
+        kvo_col = kvo.filter(regex=r"^KVO_").columns[0]
+        kvo_signal_col = kvo.filter(regex=r"^KVOs_").columns[0]
+
+        pdf["KVO"] = kvo[kvo_col]
+        pdf["Klinger_Signal"] = kvo[kvo_signal_col]
+
+        # -------------------------
+        # Combined Bullish Signal
+        # -------------------------
+        pdf["Signal_KVO_MACD_Bullish"] = (
+            (pdf["MACD"] > pdf["MACD_Signal"])
+            & (pdf["KVO"] > pdf["Klinger_Signal"])
+        )
+
+        feature_frames.append(
+            pl.from_pandas(
+                pdf[
+                    [
+                        "Ticker",
+                        "Date",
+                        "MACD",
+                        "MACD_Signal",
+                        "KVO",
+                        "Klinger_Signal",
+                        "Signal_KVO_MACD_Bullish",
+                    ]
+                ]
+            )
+        )
+
+    features = (
+        pl.concat(feature_frames)
+        .with_columns(pl.col("Date").cast(pl.Date))
+        .sort(["Ticker", "Date"])
+    )
+    df = df.with_columns(pl.col("Date").cast(pl.Date)).sort(["Ticker", "Date"])
+    return df.join(
+        features,
+        on=["Ticker", "Date"],
+        how="left",
+    )
 
 def append_vwap(
     df: pl.DataFrame,
@@ -477,3 +488,130 @@ def append_panel_rolling_amihud_ratio(
     )
 
     return result_df
+
+def append_weekly_macd_klinger_hist(
+    df: pl.DataFrame,
+    weekly_df: pl.DataFrame,
+    ticker_col: str = "Ticker",
+    date_col: str = "Date",
+    macd_hist_col: str = "W_MACD_HIST",
+    klinger_hist_col: str = "W_KLINGER_HIST",
+) -> pl.DataFrame:
+    """
+    Computes MACD histogram and Klinger Volume Oscillator histogram on
+    a weekly OHLCV dataframe, then forward-fills those values back onto
+    the original (daily) dataframe via an as-of join. Compute using ta library
+
+    Weekly indicators:
+      - MACD Histogram  = MACD_Line  - MACD_Signal
+        where MACD_Line   = EMA(Close,12) - EMA(Close,26)
+              MACD_Signal = EMA(MACD_Line, 9)
+      - Klinger Histogram = Klinger_Line - Klinger_Signal
+        where Klinger_Line   = EMA(VF,34) - EMA(VF,55)
+              Klinger_Signal  = EMA(Klinger_Line, 13)
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Daily long-form OHLCV panel sorted by [ticker_col, date_col].
+
+    weekly_df : pl.DataFrame
+        Weekly aggregated OHLCV panel (e.g. produced by group_by_dynamic
+        with every='1w'), containing at least:
+        Ticker, Date, Open, High, Low, Close, Volume.
+
+    ticker_col : str
+        Name of the ticker identifier column.
+
+    date_col : str
+        Name of the date column.
+
+    macd_hist_col : str
+        Output column name for the weekly MACD histogram feature.
+
+    klinger_hist_col : str
+        Output column name for the weekly Klinger histogram feature.
+
+    Returns
+    -------
+    pl.DataFrame
+        Original df with two new columns appended:
+        W_MACD_HIST and W_KLINGER_HIST.
+    """
+
+    df = df.sort([ticker_col, date_col])
+    weekly_df = weekly_df.sort([ticker_col, date_col])
+
+    features = []
+
+    for group in weekly_df.partition_by(ticker_col, maintain_order=True):
+
+        pdf = group.to_pandas()
+
+        # MACD Histogram
+        macd = pta.macd(
+            pdf["Close"],
+            fast=12,
+            slow=26,
+            signal=9,
+        )
+
+        pdf[macd_hist_col] = (
+            macd.filter(like="MACDh")
+            .iloc[:, 0]
+        )
+
+        # Klinger Histogram
+        kvo = pta.kvo(
+            high=pdf["High"],
+            low=pdf["Low"],
+            close=pdf["Close"],
+            volume=pdf["Volume"],
+            fast=34,
+            slow=55,
+            signal=13,
+        )
+
+        kvo_line = (
+            kvo.filter(regex=r"^KVO_")
+            .iloc[:, 0]
+        )
+
+        kvo_signal = (
+            kvo.filter(regex=r"^KVOs_")
+            .iloc[:, 0]
+        )
+
+        pdf[klinger_hist_col] = (
+            kvo_line - kvo_signal
+        )
+
+        features.append(
+            pl.from_pandas(
+                pdf[
+                    [
+                        ticker_col,
+                        date_col,
+                        macd_hist_col,
+                        klinger_hist_col,
+                    ]
+                ]
+            )
+        )
+
+    weekly_features = (
+        pl.concat(features)
+        .with_columns(
+            pl.col(date_col).cast(pl.Date)
+        )
+        .sort([ticker_col, date_col])
+    )
+
+    return df.join_asof(
+        weekly_features,
+        on=date_col,
+        by=ticker_col,
+        strategy="backward",
+    )
+
+    

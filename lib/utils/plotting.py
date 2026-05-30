@@ -50,6 +50,63 @@ def plot_price_vs_vwap(
 
     plt.show()
 
+def plot_kvo_macd_weekly_hist(df: pl.DataFrame, ticker: str):
+    
+    ticker_df = (
+        df.filter(pl.col("Ticker") == ticker)
+        .sort("Date")
+    )
+
+    #Plot in plotly. With z-scored close price
+    pdf = ticker_df.with_columns([
+        ((pl.col("Close") - pl.col("Close").mean()) / pl.col("Close").std()).alias("Close_Z")
+    ]).to_pandas()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=pdf["Date"],
+            y=pdf["Close_Z"],
+            name="Close (z-score)",
+            line=dict(color="#378ADD", width=1.8),
+        )
+    )
+    #Plot hist for kvo and macd on separate subplots, with secondary y-axis for hist
+    fig.add_trace(
+        go.Bar(
+            x=pdf["Date"],
+            y=pdf["W_KLINGER_HIST"],
+            name="W_KLINGER_HIST",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=pdf["Date"],
+            y=pdf["W_MACD_HIST"],
+            name="W_MACD_HIST",
+        )
+    )
+
+    fig.update_layout(
+        title=dict(text=f"{ticker} — Close price vs Klinger and MACD Signals (z-scored)", font_size=15),
+        height=480,
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.04, x=0),
+        margin=dict(l=60, r=40, t=60, b=40),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        yaxis=dict(
+            title="z-score",
+            showgrid=True,
+            gridcolor="#EBEBEB",
+            zeroline=True,
+            zerolinecolor="#CCCCCC",
+            zerolinewidth=1,
+        ),
+        xaxis=dict(showgrid=True, gridcolor="#EBEBEB"),
+    )
+    return fig
+
 def plot_ticker_amihud(df: pl.DataFrame, ticker: str, window_size: int = 5):
     """
     Filters a multi-ticker panel DataFrame for a specific asset and plots
