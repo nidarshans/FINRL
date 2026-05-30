@@ -75,15 +75,15 @@ def plot_kvo_macd_weekly_hist(df: pl.DataFrame, ticker: str):
     fig.add_trace(
         go.Bar(
             x=pdf["Date"],
-            y=pdf["W_KLINGER_HIST"],
-            name="W_KLINGER_HIST",
+            y=pdf["W_Klinger_Hist"],
+            name="W_Klinger_Hist",
         )
     )
     fig.add_trace(
         go.Bar(
             x=pdf["Date"],
-            y=pdf["W_MACD_HIST"],
-            name="W_MACD_HIST",
+            y=pdf["W_MACD_Hist"],
+            name="W_MACD_Hist",
         )
     )
 

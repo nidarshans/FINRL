@@ -3,15 +3,21 @@ import pandas as pd
 import pandas_ta_classic as pta
 
 
-def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
+def utils_add_klinger_and_macd_signals(
+    df: pl.DataFrame,
+    macd_hist_col: str = "MACD_Hist",
+    klinger_hist_col: str = "Klinger_Hist",
+) -> pl.DataFrame:
     """
     Engineers MACD and Klinger Volume Oscillator signals.
 
     Returns:
         MACD
         MACD_Signal
+        MACD_Hist
         KVO
         Klinger_Signal
+        Klinger_Hist
         Signal_KVO_MACD_Bullish
     """
 
@@ -36,6 +42,9 @@ def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
 
         pdf["MACD"] = macd[macd_col]
         pdf["MACD_Signal"] = macd[signal_col]
+        pdf[macd_hist_col] = (
+            pdf["MACD"] - pdf["MACD_Signal"]
+        )
 
         # -------------------------
         # Klinger Volume Oscillator
@@ -55,7 +64,10 @@ def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
 
         pdf["KVO"] = kvo[kvo_col]
         pdf["Klinger_Signal"] = kvo[kvo_signal_col]
-
+        pdf[klinger_hist_col] = (
+            pdf["KVO"] - pdf["Klinger_Signal"]
+        )
+        
         # -------------------------
         # Combined Bullish Signal
         # -------------------------
@@ -72,8 +84,10 @@ def utils_add_klinger_and_macd_signals(df: pl.DataFrame) -> pl.DataFrame:
                         "Date",
                         "MACD",
                         "MACD_Signal",
+                        macd_hist_col,
                         "KVO",
-                        "Klinger_Signal",
+                        "Klinger_Signal",   
+                        klinger_hist_col,
                         "Signal_KVO_MACD_Bullish",
                     ]
                 ]
@@ -494,8 +508,8 @@ def append_weekly_macd_klinger_hist(
     weekly_df: pl.DataFrame,
     ticker_col: str = "Ticker",
     date_col: str = "Date",
-    macd_hist_col: str = "W_MACD_HIST",
-    klinger_hist_col: str = "W_KLINGER_HIST",
+    macd_hist_col: str = "W_MACD_Hist",
+    klinger_hist_col: str = "W_Klinger_Hist",
 ) -> pl.DataFrame:
     """
     Computes MACD histogram and Klinger Volume Oscillator histogram on
@@ -536,7 +550,7 @@ def append_weekly_macd_klinger_hist(
     -------
     pl.DataFrame
         Original df with two new columns appended:
-        W_MACD_HIST and W_KLINGER_HIST.
+        W_MACD_Hist and W_Klinger_Hist.
     """
 
     df = df.sort([ticker_col, date_col])
@@ -561,6 +575,11 @@ def append_weekly_macd_klinger_hist(
             .iloc[:, 0]
         )
 
+        pdf["W_MACD_Signal"] = (
+            macd.filter(like="MACDs_")
+            .iloc[:, 0]
+        )
+
         # Klinger Histogram
         kvo = pta.kvo(
             high=pdf["High"],
@@ -577,13 +596,13 @@ def append_weekly_macd_klinger_hist(
             .iloc[:, 0]
         )
 
-        kvo_signal = (
+        pdf["W_Klinger_Signal"] = (
             kvo.filter(regex=r"^KVOs_")
             .iloc[:, 0]
         )
 
         pdf[klinger_hist_col] = (
-            kvo_line - kvo_signal
+            kvo_line - pdf["W_Klinger_Signal"]
         )
 
         features.append(
@@ -594,6 +613,8 @@ def append_weekly_macd_klinger_hist(
                         date_col,
                         macd_hist_col,
                         klinger_hist_col,
+                        "W_MACD_Signal",
+                        "W_Klinger_Signal"
                     ]
                 ]
             )
