@@ -4,7 +4,6 @@ import numpy as np
 def utils_standardize_rolling(
     df: pl.DataFrame,
     ticker_columns: dict[str, int],   # {col: window}
-    market_columns: dict[str, int],   # {col: window} — no over("Ticker")
     min_periods: int | None = None,
 ) -> pl.DataFrame:
     """
@@ -21,7 +20,7 @@ def utils_standardize_rolling(
         ).alias(c)
         for c, w in ticker_columns.items()
     ]
-
+    '''
     market_exprs = [
         ((
             pl.col(c) - pl.col(c).rolling_mean(w, min_periods=min_periods or w)
@@ -29,7 +28,7 @@ def utils_standardize_rolling(
         ).alias(c)
         for c, w in market_columns.items()
     ]
-
+    '''
     return df.with_columns(ticker_exprs)
 
 def utils_rolling_pct_change(col_name: str, n: int = 1) -> pl.Expr:
