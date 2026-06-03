@@ -212,6 +212,59 @@ def plot_price_vs_amihud(
 
     return fig
 
+def plot_price_vs_compression(df: pl.DataFrame, ticker: str):
+    ticker_df = (
+        df.filter(pl.col("Ticker") == ticker)
+        .sort("Date")
+        .with_columns([
+            ((pl.col("Close") - pl.col("Close").mean()) / pl.col("Close").std()).alias("Close_Z")
+        ])
+        .to_pandas()
+    )
+
+    fig = make_subplots(
+        specs=[[{"secondary_y": True}]]
+    )
+
+    # Price
+    fig.add_trace(
+        go.Scatter(
+            x=ticker_df["Date"],
+            y=ticker_df["Close_Z"],
+            name="Close",
+            mode="lines"
+        ),
+        secondary_y=False
+    )
+
+    # Compression
+    fig.add_trace(
+        go.Scatter(
+            x=ticker_df["Date"],
+            y=ticker_df["Compression"],
+            name="Compression",
+            mode="lines"
+        ),
+        secondary_y=True
+    )
+
+    fig.update_layout(
+        title="Price vs Compression",
+        hovermode="x unified"
+    )
+
+    fig.update_yaxes(
+        title_text="Price",
+        secondary_y=False
+    )
+
+    fig.update_yaxes(
+        title_text="Compression",
+        secondary_y=True
+    )
+
+    fig.show()
+
 def plot_hmm_regimes(ticker_df, ticker_name) -> go.Figure:
     # Convert to pandas for easier plotting with datetime handling
     pdf = ticker_df.to_pandas()
