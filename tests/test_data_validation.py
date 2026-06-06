@@ -13,7 +13,11 @@ from finrl.data.download import (
     _yfinance_frame_to_polars,
     download_ohlcv,
 )
-from finrl.data.sources import MarketDataConfig
+from finrl.data.sources import (
+    DEFAULT_MACRO_TICKERS,
+    YFINANCE_MACRO_PROXIES,
+    MarketDataConfig,
+)
 from finrl.data.storage import load_or_cache_raw_data, write_parquet
 from finrl.data.universe import UniverseConfig, load_universe, validate_universe
 
@@ -75,6 +79,33 @@ def test_yfinance_macro_conversion_returns_polars_dataframe() -> None:
     assert isinstance(data, pl.DataFrame)
     assert data.to_dicts()[0]["ticker"] == "^VIX"
     assert data.to_dicts()[0]["value"] == 20.0
+
+
+def test_default_macro_tickers_use_yfinance_proxies(tmp_path: Path) -> None:
+    config = MarketDataConfig(
+        universe=UniverseConfig(tickers=("AAA",)),
+        start="2024-01-01",
+        end="2024-02-01",
+        cache_dir=tmp_path,
+    )
+
+    assert YFINANCE_MACRO_PROXIES == {
+        "vix": "^VIX",
+        "oil": "CL=F",
+        "fed_funds_rate": "ZQ=F",
+        "treasury_10y": "ZN=F",
+        "gold": "GC=F",
+        "copper": "HG=F",
+    }
+    assert DEFAULT_MACRO_TICKERS == (
+        "^VIX",
+        "CL=F",
+        "ZQ=F",
+        "ZN=F",
+        "GC=F",
+        "HG=F",
+    )
+    assert config.macro_tickers == DEFAULT_MACRO_TICKERS
 
 
 def test_download_ohlcv_dispatches_to_yfinance(monkeypatch, tmp_path: Path) -> None:
@@ -139,6 +170,7 @@ def test_load_or_cache_raw_data_reads_cache_without_network(monkeypatch, tmp_pat
         start="2024-01-01",
         end="2024-02-01",
         cache_dir=tmp_path,
+        macro_tickers=(),
     )
     write_parquet(cached, config.cache_path)
 

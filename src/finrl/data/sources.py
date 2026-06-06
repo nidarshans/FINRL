@@ -10,6 +10,17 @@ import polars as pl
 from finrl.data.universe import UniverseConfig
 from finrl.types import PathLikeStr
 
+YFINANCE_MACRO_PROXIES: dict[str, str] = {
+    "vix": "^VIX",
+    "oil": "CL=F",
+    "fed_funds_rate": "ZQ=F",
+    "treasury_10y": "ZN=F",
+    "gold": "GC=F",
+    "copper": "HG=F",
+}
+
+DEFAULT_MACRO_TICKERS: tuple[str, ...] = tuple(YFINANCE_MACRO_PROXIES.values())
+
 
 @dataclass(frozen=True, slots=True)
 class MarketDataConfig:
@@ -22,7 +33,7 @@ class MarketDataConfig:
     source: str = "yfinance"
     auto_adjust: bool = False
     actions: bool = False
-    macro_tickers: tuple[str, ...] = ()
+    macro_tickers: tuple[str, ...] = DEFAULT_MACRO_TICKERS
 
     @property
     def cache_path(self) -> Path:
