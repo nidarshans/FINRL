@@ -12,6 +12,7 @@ dependencies = [
     "hmmlearn>=0.3",
     "jax>=0.4.0",
     "numpy>=1.24",
+    "plotly>=5.0",
     "polars>=1.0",
     "scipy>=1.10",
     "yfinance>=0.2",
