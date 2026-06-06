@@ -9,9 +9,11 @@ description = "JAX-native regime-aware PPO portfolio optimization research frame
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "hmmlearn>=0.3",
     "jax>=0.4.0",
     "numpy>=1.24",
     "polars>=1.0",
+    "scipy>=1.10",
     "yfinance>=0.2",
 ]
 
