@@ -173,6 +173,24 @@ def _environment_only_actions(n_steps: int, n_assets: int) -> jax.Array:
     return jnp.repeat(weights[None, :], n_steps, axis=0)
 
 
+def _allocation_frame(
+    dates: tuple[object, ...],
+    actions: np.ndarray,
+    asset_columns: tuple[str, ...],
+    split_index: int,
+) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "decision_date": list(dates),
+            "split_index": [split_index] * len(dates),
+            **{
+                asset: actions[:, index]
+                for index, asset in enumerate(asset_columns)
+            },
+        }
+    )
+
+
 def fit_train_artifacts(
     split: WalkForwardSplit,
     features: FeatureBundle,
@@ -301,6 +319,7 @@ def evaluate_test_split(
         portfolio_returns = np.asarray(evaluation.trajectory.step_results.net_return)
         turnovers = np.asarray(evaluation.trajectory.step_results.turnover)
         costs = np.asarray(evaluation.trajectory.step_results.transaction_cost)
+        actions = np.asarray(evaluation.trajectory.actions)
     else:
         actions = _environment_only_actions(test_returns.shape[0], test_returns.shape[1])
         _, step_results = scan_environment(
@@ -313,6 +332,7 @@ def evaluate_test_split(
         portfolio_returns = np.asarray(step_results.net_return)
         turnovers = np.asarray(step_results.turnover)
         costs = np.asarray(step_results.transaction_cost)
+        actions = np.asarray(actions)
 
     benchmark = run_benchmark_suite(split, test_spy, config)
     metrics = calculate_performance_metrics(
@@ -338,6 +358,7 @@ def evaluate_test_split(
             "split_index": [split_index] * len(test_dates),
         }
     )
+    allocation_frame = _allocation_frame(test_dates, actions, return_columns, split_index)
     spectral_frame = pl.DataFrame(
         {
             "decision_date": list(test_dates),
@@ -356,6 +377,7 @@ def evaluate_test_split(
         test_end=split.test_end,
         portfolio_returns=portfolio_frame,
         spy_returns=benchmark,
+        allocations=allocation_frame,
         spectral_features=spectral_frame,
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
@@ -396,6 +418,7 @@ def aggregate_walk_forward_results(results: tuple[SplitResult, ...], config: Exp
         raise ValueError("Cannot aggregate empty walk-forward results.")
     portfolio_returns = pl.concat([result.portfolio_returns for result in results], how="vertical")
     spy_returns = pl.concat([result.spy_returns for result in results], how="vertical")
+    allocations = pl.concat([result.allocations for result in results], how="vertical")
     spectral = pl.concat([result.spectral_features for result in results], how="vertical")
     portfolio_curve_values = equity_curve(portfolio_returns["portfolio_return"].to_numpy())
     spy_curve_values = equity_curve(spy_returns["spy_return"].to_numpy())
@@ -423,6 +446,7 @@ def aggregate_walk_forward_results(results: tuple[SplitResult, ...], config: Exp
         split_results=results,
         portfolio_curve=portfolio_curve,
         spy_curve=spy_curve,
+        allocations=allocations,
         spectral_features=spectral,
         aggregate_metrics=aggregate_metrics,
         aggregate_benchmark_metrics=aggregate_benchmark_metrics,

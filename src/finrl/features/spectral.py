@@ -26,6 +26,7 @@ def _trailing_eigenspectrum(
     dates = pivot.get_column("date").to_list()
     tickers = [column for column in pivot.columns if column != "date"]
     matrix = pivot.select(tickers).fill_null(0.0).to_numpy()
+    matrix = np.nan_to_num(matrix, nan=0.0, posinf=0.0, neginf=0.0)
     rows: list[dict[str, object]] = []
     for index, date in enumerate(dates):
         start = max(0, index - lookback + 1)

@@ -33,6 +33,7 @@ class SplitResult:
     test_end: date
     portfolio_returns: pl.DataFrame
     spy_returns: pl.DataFrame
+    allocations: pl.DataFrame
     spectral_features: pl.DataFrame
     metrics: PerformanceMetrics
     benchmark_metrics: PerformanceMetrics
@@ -45,6 +46,7 @@ class WalkForwardResult:
     split_results: tuple[SplitResult, ...]
     portfolio_curve: pl.DataFrame
     spy_curve: pl.DataFrame
+    allocations: pl.DataFrame
     spectral_features: pl.DataFrame
     aggregate_metrics: PerformanceMetrics
     aggregate_benchmark_metrics: PerformanceMetrics
@@ -115,4 +117,3 @@ def calculate_performance_metrics(
         total_transaction_cost=float(np.sum(costs_array)),
         spy_relative_alpha=cumulative_return - spy_cumulative_return,
     )
-

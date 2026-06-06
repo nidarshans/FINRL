@@ -9,6 +9,7 @@ from numpy.testing import assert_allclose
 
 from finrl.data.calendar import (
     align_to_trading_calendar,
+    build_daily_rebalance_calendar,
     build_weekly_rebalance_calendar,
     compute_open_to_open_returns,
 )
@@ -57,6 +58,23 @@ def test_build_weekly_rebalance_calendar_maps_friday_to_monday() -> None:
     ]
 
 
+def test_build_daily_rebalance_calendar_maps_each_day_to_next_two_sessions() -> None:
+    calendar = build_daily_rebalance_calendar(_two_week_ohlcv())
+
+    assert calendar.head(2).to_dicts() == [
+        {
+            "decision_date": date(2024, 1, 5),
+            "execution_date": date(2024, 1, 8),
+            "next_execution_date": date(2024, 1, 9),
+        },
+        {
+            "decision_date": date(2024, 1, 8),
+            "execution_date": date(2024, 1, 9),
+            "next_execution_date": date(2024, 1, 10),
+        },
+    ]
+
+
 def test_compute_open_to_open_returns_uses_same_weekly_holding_period() -> None:
     prices = _two_week_ohlcv()
     calendar = build_weekly_rebalance_calendar(prices)
@@ -68,6 +86,19 @@ def test_compute_open_to_open_returns_uses_same_weekly_holding_period() -> None:
     assert row["execution_date"] == date(2024, 1, 8)
     assert row["next_execution_date"] == date(2024, 1, 15)
     assert_allclose(row["return"], 0.10, rtol=RTOL, atol=ATOL)
+
+
+def test_compute_open_to_open_returns_supports_daily_holding_period() -> None:
+    prices = _two_week_ohlcv()
+    calendar = build_daily_rebalance_calendar(prices)
+
+    returns = compute_open_to_open_returns(prices, calendar)
+
+    row = returns.row(0, named=True)
+    assert row["decision_date"] == date(2024, 1, 5)
+    assert row["execution_date"] == date(2024, 1, 8)
+    assert row["next_execution_date"] == date(2024, 1, 9)
+    assert_allclose(row["return"], 102.0 / 101.0 - 1.0, rtol=RTOL, atol=ATOL)
 
 
 def test_align_to_trading_calendar_filters_dates() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import polars as pl
 from numpy.testing import assert_allclose
 
@@ -307,6 +308,33 @@ def test_missing_values_are_filled_without_future_rows() -> None:
     assert split.test.asset_features.select(pl.col("return").is_null().sum()).item() == 0
     assert split.test.macro_features.select(pl.col("macro_vix_diff").is_null().sum()).item() == 0
     assert split.test.spectral_features.select(pl.col("volume_eigen_0").is_null().sum()).item() == 0
+
+
+def test_non_finite_values_are_filled_before_standardization() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12"),
+        (1.0, float("inf")),
+        (10.0, float("nan")),
+        (100.0, float("-inf")),
+    )
+    test = _bundle(("2024-01-19",), (float("nan"),), (float("inf"),), (float("nan"),))
+
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
+
+    feature_tables = (
+        split.train.asset_features.select("return"),
+        split.train.macro_features.select("macro_vix_diff"),
+        split.train.spectral_features.select("volume_eigen_0"),
+        split.test.asset_features.select("return"),
+        split.test.macro_features.select("macro_vix_diff"),
+        split.test.spectral_features.select("volume_eigen_0"),
+    )
+    for table in feature_tables:
+        assert np.isfinite(table.to_numpy()).all()
 
 
 def test_transform_features_applies_rolling_within_supplied_history() -> None:

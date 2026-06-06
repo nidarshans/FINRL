@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import polars as pl
 from numpy.testing import assert_allclose
 
@@ -67,3 +68,19 @@ def test_spectral_components_and_flow_indicators_have_expected_columns() -> None
     assert {"liquidity_eigen_0", "liquidity_eigen_1"}.issubset(liquidity.columns)
     assert "sector_flow_return_mean" in flows.columns
     assert len([column for column in spectral.columns if column != "date"]) == 20
+
+
+def test_eigenspectrum_treats_non_finite_inputs_as_missing() -> None:
+    data = _spectral_input().with_columns(
+        pl.when((pl.col("date") == date(2024, 1, 3)) & (pl.col("ticker") == "AAA"))
+        .then(float("inf"))
+        .when((pl.col("date") == date(2024, 1, 4)) & (pl.col("ticker") == "BBB"))
+        .then(float("nan"))
+        .otherwise(pl.col("amihud_illiquidity"))
+        .alias("amihud_illiquidity")
+    )
+
+    liquidity = compute_liquidity_eigenspectrum(data, lookback=3, n_components=2)
+
+    values = liquidity.select(["liquidity_eigen_0", "liquidity_eigen_1"]).to_numpy()
+    assert np.isfinite(values).all()

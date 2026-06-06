@@ -38,6 +38,23 @@ def build_weekly_rebalance_calendar(daily_prices: pl.DataFrame) -> pl.DataFrame:
     ).drop_nulls(["execution_date", "next_execution_date"])
 
 
+def build_daily_rebalance_calendar(daily_prices: pl.DataFrame) -> pl.DataFrame:
+    """Build daily decision to next-session execution calendar from OHLCV dates."""
+
+    trading_dates = (
+        enforce_ohlcv_schema(daily_prices)
+        .select(pl.col("date"))
+        .unique()
+        .sort("date")
+        .with_columns(
+            pl.col("date").shift(-1).alias("execution_date"),
+            pl.col("date").shift(-2).alias("next_execution_date"),
+        )
+        .rename({"date": "decision_date"})
+    )
+    return trading_dates.drop_nulls(["execution_date", "next_execution_date"])
+
+
 def compute_open_to_open_returns(
     open_prices: pl.DataFrame,
     rebalance_calendar: pl.DataFrame,

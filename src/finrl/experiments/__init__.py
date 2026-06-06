@@ -3,6 +3,7 @@
 from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
 from finrl.experiments.config import ExperimentConfig
 from finrl.experiments.reporting import (
+    build_allocation_figure,
     build_performance_figure,
     build_spectral_figure,
     metrics_to_frame,
@@ -24,6 +25,7 @@ __all__ = [
     "RawExperimentData",
     "SplitRunResult",
     "aggregate_walk_forward_results",
+    "build_allocation_figure",
     "build_performance_figure",
     "build_spectral_figure",
     "evaluate_test_split",

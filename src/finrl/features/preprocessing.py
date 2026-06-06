@@ -177,6 +177,7 @@ def _clip_expr(column: str, config: PreprocessingConfig) -> pl.Expr:
 
 def _fill_expr(column: str, fitted: FittedTablePreprocessor, config: PreprocessingConfig) -> pl.Expr:
     expr = _clip_expr(column, config)
+    expr = pl.when(expr.is_finite()).then(expr).otherwise(None)
     if fitted.group_columns:
         expr = expr.forward_fill().over(fitted.group_columns)
     else:
