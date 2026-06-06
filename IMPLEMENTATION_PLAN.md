@@ -1,8 +1,8 @@
 # Implementation Plan
 
-This plan follows `ARCHITECTURE.MD`, `PROJECT_CONTEXT.md`, `TESTING.md`, `README.md`, and `AGENTS.md`. The architecture remains the source of truth; if implementation conflicts with it, update code rather than architecture. Do not begin PPO until the JAX environment, accounting tests, and benchmark backtests are correct.
+This plan follows `ARCHITECTURE.MD`, `PROJECT_CONTEXT.md`, `TESTING.md`, `README.md`, and `AGENTS.md`. The architecture remains the source of truth; if implementation conflicts with it, update code rather than architecture. Do not begin production PPO training or trust PPO evaluation results until the JAX environment, accounting tests, and benchmark backtests are correct.
 
-The phase order below matches the requested planning breakdown. Early environment phases must use small synthetic fixtures only; integration with real market data begins after the data ingestion and feature engineering phases.
+The numbered phase sections below preserve the requested planning breakdown. Implementation order is now: Phase 1, Phase 2, Phase 3, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 11, Phase 12, and Phase 4 last. Early environment phases must use small synthetic fixtures only; integration with real market data begins after the data ingestion and feature engineering phases.
 
 ## Execution Targets
 
@@ -17,7 +17,7 @@ The phase order below matches the requested planning breakdown. Early environmen
 ### Colab Training
 
 - Target: Google Colab with a single GPU when available.
-- Use Colab for the full 100-stock universe, encoder training, PPO training, and full walk-forward experiments.
+- Use Colab for the full configured `N`-stock universe, encoder training, PPO training, and full walk-forward experiments.
 - Keep GPU-only assumptions isolated to experiment scripts or notebooks.
 - Core package modules and tests must remain CPU-compatible.
 
@@ -32,6 +32,7 @@ The phase order below matches the requested planning breakdown. Early environmen
 - Avoid look-ahead bias in every split, feature, benchmark, HMM, encoder, and PPO path.
 - Keep the v1 training loop Colab-friendly: single historical trajectory, modest memory use, minimal dependencies.
 - Keep full-universe training and GPU-only work out of unit tests and isolated to experiment scripts or notebooks.
+- Treat the number of stocks as configurable `N`; do not hard-code 100 stocks except as an optional default.
 - Use filtering-only HMM probabilities: `P(k_t | x_1:t)`. Never use forward-backward smoothing for evaluation features.
 - Follow `TESTING.md` strictly. Financial correctness gates model sophistication.
 
@@ -185,7 +186,7 @@ Implement the pure JAX accounting and weekly trading step required by the first 
 
 - `pytest` passes with strict tolerances from `TESTING.md`.
 - Tests use small deterministic arrays and pass on CPU-only JAX.
-- Environment supports 100 stocks plus cash, 101 allocation weights total.
+- Environment supports configured `N` stocks plus cash, `N + 1` allocation weights total.
 - One step represents Friday decision, Monday-open rebalance, Monday-open to next Monday-open hold.
 - Transaction costs are charged from turnover exactly as specified.
 - Reward is SPY-relative and pluggable.
@@ -263,11 +264,11 @@ Expand financial correctness coverage until accounting and reward behavior are t
 - Reward tests fail to cover drawdown and turnover penalties together.
 - Floating-point tolerances are too loose to catch accounting mistakes.
 
-## Phase 4: Benchmark Strategies
+## Phase 4: Benchmark Strategies (Implement Last)
 
 ### Objective
 
-Implement deterministic benchmark strategies and a simple benchmark backtest path before any HMM, encoder, or PPO work.
+Implement deterministic benchmark strategies and a simple benchmark backtest path after the main data, feature, model, PPO, and experiment scaffolding phases are in place. This phase is deliberately deferred to the end, but production PPO results are not considered valid until this benchmark suite passes.
 
 ### Files to Create or Modify
 
@@ -314,11 +315,15 @@ Implement deterministic benchmark strategies and a simple benchmark backtest pat
 - SPY-relative performance is computed over the exact same Monday-open holding windows.
 - Benchmark policies are deterministic and reproducible.
 - No benchmark uses future returns, full-sample covariance, or full-period ranking.
+- Final PPO and walk-forward reports include benchmark comparisons before any research conclusions are drawn.
 
 ### Dependencies on Prior Phases
 
 - Phase 2 environment step.
 - Phase 3 accounting/reward test coverage.
+- Phase 5 data ingestion and calendar.
+- Phase 8 walk-forward splitter.
+- Phase 12 experiment runner integration points.
 
 ### Risks or Failure Modes
 
@@ -331,7 +336,7 @@ Implement deterministic benchmark strategies and a simple benchmark backtest pat
 
 ### Objective
 
-Build a reproducible public-market-data layer for the 100-stock universe, SPY, cash/risk-free data, macro series, and raw OHLCV inputs.
+Build a reproducible public-market-data layer for a configurable `N`-stock universe, SPY, cash/risk-free data, macro series, and raw OHLCV inputs. Use `yfinance` for ticker OHLCV data and Polars DataFrames for ingestion, validation, alignment, and cached tabular storage.
 
 ### Files to Create or Modify
 
@@ -352,8 +357,9 @@ Build a reproducible public-market-data layer for the 100-stock universe, SPY, c
 - `MarketDataConfig`
 - `MarketDataBundle`
 - `load_universe(path)`
-- `validate_universe(tickers, expected_count=100)`
-- `download_ohlcv(tickers, start, end, source_config)`
+- `validate_universe(tickers, expected_count: int | None = None)`
+- `download_ohlcv_yfinance(tickers, start, end, source_config) -> pl.DataFrame`
+- `download_ohlcv(tickers, start, end, source_config) -> pl.DataFrame`
 - `download_macro_series(start, end, source_config)`
 - `align_to_trading_calendar(data, calendar)`
 - `build_weekly_rebalance_calendar(daily_prices)`
@@ -362,7 +368,10 @@ Build a reproducible public-market-data layer for the 100-stock universe, SPY, c
 
 ### Tests to Write
 
-- Universe contains exactly 100 stocks before cash is added.
+- Universe contains the configured `N` stocks before cash is added.
+- `N` may be small for local tests and larger for Colab runs.
+- Ticker OHLCV download code uses `yfinance`.
+- Ingestion APIs return Polars DataFrames for tabular data.
 - SPY is available for benchmark returns.
 - Open prices produce correct Monday-open to Monday-open returns.
 - Weekly calendar maps Friday decision dates to next Monday execution dates.
@@ -374,19 +383,23 @@ Build a reproducible public-market-data layer for the 100-stock universe, SPY, c
 - Raw data can be loaded from cache without network access.
 - Data bundle contains aligned stock OHLCV, SPY OHLCV, macro series, and calendar metadata.
 - Local ingestion tests use tiny cached fixtures rather than full-universe downloads.
+- Polars is used for ingestion and cached tabular data; conversion to NumPy/JAX arrays happens only at explicit model or environment boundaries.
+- The universe size is parameterized by `N`; no production code hard-codes 100 stocks.
 - No preprocessing or feature fitting occurs in ingestion.
 - Date alignment makes look-ahead boundaries explicit.
 
 ### Dependencies on Prior Phases
 
 - Phase 1 package structure.
-- Phase 4 defines return timing requirements that ingestion must satisfy.
+- Phase 2 defines environment return timing requirements that ingestion must satisfy.
+- Phase 4 is deferred until last and consumes the aligned returns produced here.
 
 ### Risks or Failure Modes
 
 - Public data source changes format or rate limits downloads.
 - Survivorship bias in user-selected universe.
 - Missing Monday opens due to holidays.
+- yfinance data can be adjusted, delayed, missing, or revised; schema validation must make these issues visible.
 - Timezone or date-index mismatch between assets and macro data.
 
 ## Phase 6: Feature Engineering
@@ -440,7 +453,7 @@ Generate asset, macro, spectral, and optional Hawkes features using only informa
 - Each feature uses only trailing windows.
 - Cross-sectional ranks are computed per date, not globally.
 - Feature tensors have expected shapes:
-  - asset: `(T, 100, F_asset)`
+  - asset: `(T, N, F_asset)`
   - macro: `(T, F_macro)`
   - spectral: `(T, 20)`
 - Missing initial lookback periods are handled consistently.
@@ -688,7 +701,7 @@ Implement the JAX/Flax encoder that maps 60-day asset, macro, and spectral input
 
 ### Risks or Failure Modes
 
-- Memory use too high for Colab when windowing full 100-stock history.
+- Memory use too high for Colab when windowing full configured `N`-stock history.
 - Shared LSTM accidentally becomes per-asset independent parameters.
 - Attention pooling masks or dimensions are incorrect.
 - Unspecified encoder training objective leads to invented architecture.
@@ -697,7 +710,7 @@ Implement the JAX/Flax encoder that maps 60-day asset, macro, and spectral input
 
 ### Objective
 
-Implement PPO only after environment, accounting, rewards, and benchmark backtests pass. PPO should train on a single historical trajectory per walk-forward train split and freeze policy for test evaluation.
+Implement PPO after environment, accounting, rewards, data, features, preprocessing, walk-forward splitting, HMM, and encoder scaffolding are correct. PPO should train on a single historical trajectory per walk-forward train split and freeze policy for test evaluation. Because Phase 4 benchmark strategies are now implemented last, PPO implementation may proceed before final benchmark validation, but production PPO claims remain blocked until Phase 4 passes.
 
 ### Files to Create or Modify
 
@@ -734,12 +747,12 @@ Implement PPO only after environment, accounting, rewards, and benchmark backtes
 
 ### Tests to Write
 
-- Actor outputs 101 logits and valid long-only weights after temperature softmax.
+- Actor outputs `N + 1` logits and valid long-only weights after temperature softmax.
 - Weights sum to 1 and are nonnegative.
 - PPO state dimension matches architecture-derived context:
   - `phi_t` 32
   - regime probabilities 4
-  - weights 101
+  - weights `N + 1`
   - drawdown 1
   - previous turnover 1
 - GAE is correct on small hand-computed trajectories.
@@ -753,7 +766,8 @@ Implement PPO only after environment, accounting, rewards, and benchmark backtes
 - PPO runs on synthetic and small real prepared data without breaking accounting tests.
 - Policy checkpoint can be saved and loaded.
 - Frozen test evaluation produces deterministic metrics for a fixed seed.
-- PPO start is blocked unless Phase 2, Phase 3, and Phase 4 acceptance criteria are met.
+- PPO implementation is blocked unless Phase 2 and Phase 3 acceptance criteria are met.
+- Production PPO evaluation and research conclusions are blocked until deferred Phase 4 benchmark acceptance criteria are met.
 - Local PPO tests use tiny deterministic trajectories on CPU-only JAX.
 - Full PPO training is isolated to Colab experiment scripts or notebooks.
 
@@ -761,10 +775,10 @@ Implement PPO only after environment, accounting, rewards, and benchmark backtes
 
 - Phase 2 JAX environment.
 - Phase 3 accounting/reward tests.
-- Phase 4 benchmark backtests.
 - Phase 8 walk-forward splits.
 - Phase 9 regime probabilities.
 - Phase 10 market states.
+- Phase 4 benchmark backtests for final validation only, because Phase 4 is implemented last.
 
 ### Risks or Failure Modes
 
@@ -777,7 +791,7 @@ Implement PPO only after environment, accounting, rewards, and benchmark backtes
 
 ### Objective
 
-Tie data, features, preprocessing, encoder, HMM, PPO, benchmarks, and reporting into a strict out-of-sample annual walk-forward experiment.
+Tie data, features, preprocessing, encoder, HMM, PPO, benchmark integration hooks, and reporting into a strict out-of-sample annual walk-forward experiment. Benchmark strategy implementations themselves are deferred to Phase 4, which is implemented last.
 
 ### Files to Create or Modify
 
@@ -808,22 +822,20 @@ Tie data, features, preprocessing, encoder, HMM, PPO, benchmarks, and reporting 
 - End-to-end synthetic walk-forward run with at least two splits.
 - Artifacts fitted on each train split are reused frozen for its test split.
 - Preprocessing, HMM, encoder, and PPO fit metadata match train window only.
-- Benchmarks and PPO use identical holding-period returns and SPY returns.
+- Benchmark integration points and PPO use identical holding-period returns and SPY returns once Phase 4 is implemented.
 - Results aggregation preserves split boundaries.
-- Runner can disable PPO and run environment plus benchmarks only.
+- Runner can disable PPO and run data/features/preprocessing/environment flow on synthetic fixtures before benchmark strategies exist.
 
 ### Acceptance Criteria
 
-- Full pipeline can run in benchmark-only mode first:
+- Full pipeline can run in environment-only smoke mode first:
   - Data
   - Features
   - Preprocessing
   - Environment
-  - Equal Weight
-  - SPY-relative performance
-- PPO mode is available only after benchmark-only mode is correct.
+- PPO mode is available only after environment-only smoke mode and no-look-ahead checks are correct.
 - Local experiment tests use tiny synthetic walk-forward runs on CPU-only JAX.
-- Full 100-stock walk-forward experiments are isolated to Colab scripts or notebooks.
+- Full configured `N`-stock walk-forward experiments are isolated to Colab scripts or notebooks.
 - Output includes per-split and aggregate metrics:
   - cumulative return
   - annualized return
@@ -834,37 +846,43 @@ Tie data, features, preprocessing, encoder, HMM, PPO, benchmarks, and reporting 
   - SPY-relative alpha
 - Experiment is reproducible for fixed config and seed.
 - Colab path is documented and avoids heavy local-only assumptions.
+- Final benchmark comparisons are added after deferred Phase 4 is implemented.
 
 ### Dependencies on Prior Phases
 
-- All prior phases.
+- Phases 1-3 and 5-11.
+- Phase 4 is intentionally deferred until after this runner exists; Phase 12 should expose benchmark integration hooks but not require benchmark strategy implementations yet.
 
 ### Risks or Failure Modes
 
 - The runner becomes a monolith instead of composing tested components.
 - Artifacts from one split leak into another.
 - Reporting hides per-split failures behind aggregate performance.
-- PPO mode is attempted before benchmark-only mode is validated.
+- PPO mode is treated as research-valid before deferred benchmark validation.
 
 ## Milestone Gates
 
 1. Repository imports and tests run.
 2. JAX accounting and environment tests pass.
-3. Benchmark backtests pass on synthetic data.
-4. Real data ingestion and feature generation produce aligned train/test-ready tensors.
-5. Preprocessing and splitter pass no-look-ahead tests.
-6. Benchmark-only walk-forward run completes.
+3. Accounting and reward tests cover hand-computed fixtures and edge cases.
+4. Data ingestion with yfinance and Polars produces aligned train/test-ready data for configured `N`.
+5. Feature generation produces aligned tensors for configured `N`.
+6. Preprocessing and splitter pass no-look-ahead tests.
 7. HMM filtering outputs pass no-look-ahead tests.
 8. Encoder produces `phi_t` under JAX with correct windows.
-9. PPO trains and evaluates on a frozen test split.
-10. Full walk-forward runner completes with per-split reporting.
+9. PPO trains and evaluates on a frozen test split in synthetic/smoke mode.
+10. Full walk-forward runner completes with per-split reporting hooks.
+11. Phase 4 benchmark strategies are implemented last and pass synthetic plus walk-forward validation.
+12. Final reports include benchmark comparisons before any research conclusions are drawn.
 
 ## Non-Negotiable Stop Conditions
 
-- Do not implement PPO before the JAX environment, accounting tests, and benchmark backtests are correct.
+- Do not implement PPO before the JAX environment and accounting/reward tests are correct.
+- Do not treat PPO results as production-valid before deferred Phase 4 benchmark backtests are correct.
 - Do not fit preprocessing, HMM, encoder, PPO, or benchmark statistics on full data for production paths.
 - Do not use HMM smoothing probabilities in evaluation.
 - Do not require a local GPU for tests or core package imports.
 - Do not put full-universe training assumptions into unit tests.
+- Do not hard-code a 100-stock universe; use configured `N` stocks plus cash.
 - Do not change `ARCHITECTURE.MD` without explicit user approval.
 - Do not invent unspecified research architecture; add a TODO or request clarification.

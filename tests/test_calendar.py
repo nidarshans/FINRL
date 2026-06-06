@@ -1,0 +1,84 @@
+"""Tests for weekly rebalance calendar and open-to-open returns."""
+
+from __future__ import annotations
+
+from datetime import date
+
+import polars as pl
+from numpy.testing import assert_allclose
+
+from finrl.data.calendar import (
+    align_to_trading_calendar,
+    build_weekly_rebalance_calendar,
+    compute_open_to_open_returns,
+)
+from finrl.data.schema import enforce_ohlcv_schema
+
+RTOL = 1e-6
+ATOL = 1e-8
+
+
+def _two_week_ohlcv() -> pl.DataFrame:
+    dates = [
+        "2024-01-05",
+        "2024-01-08",
+        "2024-01-09",
+        "2024-01-10",
+        "2024-01-11",
+        "2024-01-12",
+        "2024-01-15",
+    ]
+    opens = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 111.1]
+    return enforce_ohlcv_schema(
+        pl.DataFrame(
+            {
+                "date": dates,
+                "ticker": ["AAA"] * len(dates),
+                "open": opens,
+                "high": opens,
+                "low": opens,
+                "close": opens,
+                "adj_close": opens,
+                "volume": [1_000] * len(dates),
+            }
+        )
+    )
+
+
+def test_build_weekly_rebalance_calendar_maps_friday_to_monday() -> None:
+    calendar = build_weekly_rebalance_calendar(_two_week_ohlcv())
+
+    assert calendar.to_dicts() == [
+        {
+            "decision_date": date(2024, 1, 5),
+            "execution_date": date(2024, 1, 8),
+            "next_execution_date": date(2024, 1, 15),
+        }
+    ]
+
+
+def test_compute_open_to_open_returns_uses_same_weekly_holding_period() -> None:
+    prices = _two_week_ohlcv()
+    calendar = build_weekly_rebalance_calendar(prices)
+
+    returns = compute_open_to_open_returns(prices, calendar)
+
+    row = returns.row(0, named=True)
+    assert row["ticker"] == "AAA"
+    assert row["execution_date"] == date(2024, 1, 8)
+    assert row["next_execution_date"] == date(2024, 1, 15)
+    assert_allclose(row["return"], 0.10, rtol=RTOL, atol=ATOL)
+
+
+def test_align_to_trading_calendar_filters_dates() -> None:
+    data = _two_week_ohlcv()
+    calendar = pl.DataFrame({"date": ["2024-01-05", "2024-01-08"]}).with_columns(
+        pl.col("date").cast(pl.Date)
+    )
+
+    aligned = align_to_trading_calendar(data, calendar)
+
+    assert aligned.get_column("date").to_list() == [
+        date(2024, 1, 5),
+        date(2024, 1, 8),
+    ]

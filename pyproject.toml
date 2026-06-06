@@ -11,6 +11,8 @@ requires-python = ">=3.10"
 dependencies = [
     "jax>=0.4.0",
     "numpy>=1.24",
+    "polars>=1.0",
+    "yfinance>=0.2",
 ]
 
 [project.optional-dependencies]
