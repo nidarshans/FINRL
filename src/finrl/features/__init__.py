@@ -15,6 +15,14 @@ from finrl.features.asset import (
 from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
 from finrl.features.pipeline import build_feature_bundle
+from finrl.features.preprocessing import (
+    FittedPreprocessor,
+    PreprocessedSplit,
+    PreprocessingConfig,
+    fit_preprocessors,
+    fit_transform_train_transform_test,
+    transform_features,
+)
 from finrl.features.relative import cross_sectional_percentile_rank
 from finrl.features.schema import FeatureBundle, FeatureConfig
 from finrl.features.spectral import (
@@ -27,6 +35,9 @@ from finrl.features.spectral import (
 __all__ = [
     "FeatureBundle",
     "FeatureConfig",
+    "FittedPreprocessor",
+    "PreprocessedSplit",
+    "PreprocessingConfig",
     "build_feature_bundle",
     "compute_amihud_illiquidity",
     "compute_asset_features",
@@ -45,4 +56,7 @@ __all__ = [
     "compute_volume_eigenspectrum",
     "compute_volume_momentum",
     "cross_sectional_percentile_rank",
+    "fit_preprocessors",
+    "fit_transform_train_transform_test",
+    "transform_features",
 ]
