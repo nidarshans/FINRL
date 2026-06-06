@@ -1,17 +1,11 @@
-"""Offline sklearn preprocessing fitted on train-window features only."""
+"""Chronological rolling preprocessing for feature tables."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from typing import Literal
 
-import numpy as np
 import polars as pl
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from finrl.features.schema import FeatureBundle
 from finrl.features.splitsafe import FitWindow, feature_date_range, validate_train_test_order
@@ -21,91 +15,50 @@ TableKind = Literal["asset", "macro", "spectral"]
 
 @dataclass(frozen=True, slots=True)
 class PreprocessingConfig:
-    """Configuration for train-window-only preprocessing."""
+    """Configuration for no-look-ahead rolling preprocessing."""
 
-    impute_strategy: str = "median"
+    rolling_window: int = 252
     scale: bool = True
     clip_lower: float | None = None
     clip_upper: float | None = None
     preserve_rank_columns: bool = True
+    fill_null_value: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class FittedTablePreprocessor:
-    """Fitted sklearn pipeline and column metadata for one feature table."""
+    """Metadata for one rolling-preprocessed feature table."""
 
     kind: TableKind
     id_columns: tuple[str, ...]
     transformed_columns: tuple[str, ...]
     passthrough_columns: tuple[str, ...]
-    pipeline: Pipeline | None
+    group_columns: tuple[str, ...]
+    rolling_window: int
 
 
 @dataclass(frozen=True, slots=True)
 class FittedPreprocessor:
-    """All fitted preprocessing artifacts and their train fit window."""
+    """Preprocessing metadata and the train fit window.
+
+    No full-window scaler statistics are stored. Rolling statistics are computed
+    chronologically at transform time from current and prior rows only.
+    """
 
     asset: FittedTablePreprocessor
     macro: FittedTablePreprocessor
     spectral: FittedTablePreprocessor
     fit_window: FitWindow
+    config: PreprocessingConfig
 
 
 @dataclass(frozen=True, slots=True)
 class PreprocessedSplit:
-    """Train/test feature bundles after train-fitted preprocessing."""
+    """Train/test feature bundles after chronological rolling preprocessing."""
 
     train: FeatureBundle
     test: FeatureBundle
     preprocessor: FittedPreprocessor
-
-
-class ClipTransformer(BaseEstimator, TransformerMixin):
-    """sklearn-compatible numeric clipping transformer."""
-
-    def __init__(
-        self,
-        lower: float | None = None,
-        upper: float | None = None,
-    ) -> None:
-        self.lower = lower
-        self.upper = upper
-
-    def fit(self, values, y=None):
-        del y
-        return self
-
-    def transform(self, values):
-        return np.clip(values, self.lower, self.upper)
-
-
-def _build_pipeline(config: PreprocessingConfig) -> Pipeline:
-    steps: list[tuple[str, object]] = [
-        ("imputer", SimpleImputer(strategy=config.impute_strategy)),
-    ]
-    if config.clip_lower is not None or config.clip_upper is not None:
-        steps.append(("clip", ClipTransformer(config.clip_lower, config.clip_upper)))
-    if config.scale:
-        steps.append(("scaler", StandardScaler()))
-    return Pipeline(steps)
-
-
-def build_asset_preprocessor(config: PreprocessingConfig) -> Pipeline:
-    """Build the sklearn pipeline used for non-rank asset features."""
-
-    return _build_pipeline(config)
-
-
-def build_macro_preprocessor(config: PreprocessingConfig) -> Pipeline:
-    """Build the sklearn pipeline used for macro features."""
-
-    return _build_pipeline(config)
-
-
-def build_spectral_preprocessor(config: PreprocessingConfig) -> Pipeline:
-    """Build the sklearn pipeline used for spectral features."""
-
-    return _build_pipeline(config)
 
 
 def _is_rank_column(column: str) -> bool:
@@ -129,23 +82,66 @@ def _split_columns(
     return transformed, passthrough
 
 
-def _fit_table(
+def _table_preprocessor(
     table: pl.DataFrame,
     kind: TableKind,
     id_columns: tuple[str, ...],
+    group_columns: tuple[str, ...],
     config: PreprocessingConfig,
-    pipeline: Pipeline,
 ) -> FittedTablePreprocessor:
     transformed_columns, passthrough_columns = _split_columns(table, id_columns, config)
-    fitted_pipeline: Pipeline | None = None
-    if transformed_columns:
-        fitted_pipeline = pipeline.fit(table.select(transformed_columns).to_numpy())
     return FittedTablePreprocessor(
         kind=kind,
         id_columns=id_columns,
         transformed_columns=transformed_columns,
         passthrough_columns=passthrough_columns,
-        pipeline=fitted_pipeline,
+        group_columns=group_columns,
+        rolling_window=config.rolling_window,
+    )
+
+
+def build_asset_preprocessor(
+    table: pl.DataFrame,
+    config: PreprocessingConfig,
+) -> FittedTablePreprocessor:
+    """Build rolling metadata for asset features, grouped by ticker."""
+
+    return _table_preprocessor(
+        table=table,
+        kind="asset",
+        id_columns=("date", "ticker"),
+        group_columns=("ticker",),
+        config=config,
+    )
+
+
+def build_macro_preprocessor(
+    table: pl.DataFrame,
+    config: PreprocessingConfig,
+) -> FittedTablePreprocessor:
+    """Build rolling metadata for macro features."""
+
+    return _table_preprocessor(
+        table=table,
+        kind="macro",
+        id_columns=("date",),
+        group_columns=(),
+        config=config,
+    )
+
+
+def build_spectral_preprocessor(
+    table: pl.DataFrame,
+    config: PreprocessingConfig,
+) -> FittedTablePreprocessor:
+    """Build rolling metadata for spectral features."""
+
+    return _table_preprocessor(
+        table=table,
+        kind="spectral",
+        id_columns=("date",),
+        group_columns=(),
+        config=config,
     )
 
 
@@ -153,65 +149,142 @@ def fit_preprocessors(
     train_features: FeatureBundle,
     config: PreprocessingConfig,
 ) -> FittedPreprocessor:
-    """Fit preprocessing artifacts on an explicit train feature bundle only."""
+    """Create rolling preprocessing metadata from explicit train features only."""
 
     return FittedPreprocessor(
-        asset=_fit_table(
-            train_features.asset_features,
-            "asset",
-            ("date", "ticker"),
-            config,
-            build_asset_preprocessor(config),
-        ),
-        macro=_fit_table(
-            train_features.macro_features,
-            "macro",
-            ("date",),
-            config,
-            build_macro_preprocessor(config),
-        ),
-        spectral=_fit_table(
-            train_features.spectral_features,
-            "spectral",
-            ("date",),
-            config,
-            build_spectral_preprocessor(config),
-        ),
+        asset=build_asset_preprocessor(train_features.asset_features, config),
+        macro=build_macro_preprocessor(train_features.macro_features, config),
+        spectral=build_spectral_preprocessor(train_features.spectral_features, config),
         fit_window=feature_date_range(train_features),
+        config=config,
     )
 
 
-def _transform_table(
+def _sort_columns(fitted: FittedTablePreprocessor) -> list[str]:
+    if fitted.group_columns:
+        return [*fitted.group_columns, "date"]
+    return ["date"]
+
+
+def _clip_expr(column: str, config: PreprocessingConfig) -> pl.Expr:
+    expr = pl.col(column).cast(pl.Float64)
+    if config.clip_lower is not None:
+        expr = expr.clip(lower_bound=config.clip_lower)
+    if config.clip_upper is not None:
+        expr = expr.clip(upper_bound=config.clip_upper)
+    return expr
+
+
+def _fill_expr(column: str, fitted: FittedTablePreprocessor, config: PreprocessingConfig) -> pl.Expr:
+    expr = _clip_expr(column, config)
+    if fitted.group_columns:
+        expr = expr.forward_fill().over(fitted.group_columns)
+    else:
+        expr = expr.forward_fill()
+    return expr.fill_null(config.fill_null_value)
+
+
+def _rolling_mean_expr(column: str, fitted: FittedTablePreprocessor) -> pl.Expr:
+    expr = pl.col(column).rolling_mean(
+        window_size=fitted.rolling_window,
+        min_samples=1,
+    )
+    if fitted.group_columns:
+        return expr.over(fitted.group_columns)
+    return expr
+
+
+def _rolling_std_expr(column: str, fitted: FittedTablePreprocessor) -> pl.Expr:
+    expr = pl.col(column).rolling_std(
+        window_size=fitted.rolling_window,
+        min_samples=2,
+    )
+    if fitted.group_columns:
+        return expr.over(fitted.group_columns)
+    return expr
+
+
+def _rolling_standardize_table(
     table: pl.DataFrame,
     fitted: FittedTablePreprocessor,
+    config: PreprocessingConfig,
 ) -> pl.DataFrame:
-    id_frame = table.select(fitted.id_columns)
-    pieces = [id_frame]
-    if fitted.transformed_columns:
-        if fitted.pipeline is None:
-            raise ValueError(f"Missing fitted pipeline for {fitted.kind} features.")
-        transformed = fitted.pipeline.transform(table.select(fitted.transformed_columns).to_numpy())
-        pieces.append(
-            pl.DataFrame(
-                transformed,
-                schema=list(fitted.transformed_columns),
-                orient="row",
-            )
+    sorted_table = table.sort(_sort_columns(fitted))
+    working_columns = [f"__{column}_filled" for column in fitted.transformed_columns]
+    mean_columns = [f"__{column}_mean" for column in fitted.transformed_columns]
+    std_columns = [f"__{column}_std" for column in fitted.transformed_columns]
+
+    output = sorted_table.with_columns(
+        [
+            _fill_expr(column, fitted, config).alias(f"__{column}_filled")
+            for column in fitted.transformed_columns
+        ]
+    )
+    if config.scale:
+        output = output.with_columns(
+            [
+                _rolling_mean_expr(f"__{column}_filled", fitted).alias(f"__{column}_mean")
+                for column in fitted.transformed_columns
+            ]
+            + [
+                _rolling_std_expr(f"__{column}_filled", fitted).alias(f"__{column}_std")
+                for column in fitted.transformed_columns
+            ]
         )
-    if fitted.passthrough_columns:
-        pieces.append(table.select(fitted.passthrough_columns))
-    return pl.concat(pieces, how="horizontal")
+        output = output.with_columns(
+            [
+                pl.when((pl.col(f"__{column}_std").is_null()) | (pl.col(f"__{column}_std") == 0.0))
+                .then(0.0)
+                .otherwise(
+                    (pl.col(f"__{column}_filled") - pl.col(f"__{column}_mean"))
+                    / pl.col(f"__{column}_std")
+                )
+                .alias(column)
+                for column in fitted.transformed_columns
+            ]
+        )
+    else:
+        output = output.with_columns(
+            [
+                pl.col(f"__{column}_filled").alias(column)
+                for column in fitted.transformed_columns
+            ]
+        )
+
+    selected_columns = [
+        *fitted.id_columns,
+        *fitted.transformed_columns,
+        *fitted.passthrough_columns,
+    ]
+    if "__split" in output.columns:
+        selected_columns.append("__split")
+    return output.select(selected_columns).drop(
+        working_columns + mean_columns + std_columns,
+        strict=False,
+    )
 
 
 def transform_features(
     features: FeatureBundle,
     fitted_preprocessors: FittedPreprocessor,
 ) -> FeatureBundle:
-    """Transform features using train-fitted preprocessing artifacts."""
+    """Apply rolling preprocessing within a provided feature bundle."""
 
-    asset = _transform_table(features.asset_features, fitted_preprocessors.asset)
-    macro = _transform_table(features.macro_features, fitted_preprocessors.macro)
-    spectral = _transform_table(features.spectral_features, fitted_preprocessors.spectral)
+    asset = _rolling_standardize_table(
+        features.asset_features,
+        fitted_preprocessors.asset,
+        fitted_preprocessors.config,
+    )
+    macro = _rolling_standardize_table(
+        features.macro_features,
+        fitted_preprocessors.macro,
+        fitted_preprocessors.config,
+    )
+    spectral = _rolling_standardize_table(
+        features.spectral_features,
+        fitted_preprocessors.spectral,
+        fitted_preprocessors.config,
+    )
     return FeatureBundle(
         asset_features=asset,
         macro_features=macro,
@@ -228,17 +301,84 @@ def transform_features(
     )
 
 
+def _combine_train_test_table(
+    train_table: pl.DataFrame,
+    test_table: pl.DataFrame,
+) -> pl.DataFrame:
+    return pl.concat(
+        [
+            train_table.with_columns(pl.lit("train").alias("__split")),
+            test_table.with_columns(pl.lit("test").alias("__split")),
+        ],
+        how="vertical",
+    )
+
+
+def _split_processed_table(table: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    train = table.filter(pl.col("__split") == "train").drop("__split")
+    test = table.filter(pl.col("__split") == "test").drop("__split")
+    return train, test
+
+
 def fit_transform_train_transform_test(
     train_features: FeatureBundle,
     test_features: FeatureBundle,
     config: PreprocessingConfig,
 ) -> PreprocessedSplit:
-    """Fit on train features, then transform train and test with the train fit."""
+    """Rolling-standardize train/test chronologically without future leakage."""
 
     validate_train_test_order(train_features, test_features)
     fitted = fit_preprocessors(train_features, config)
-    return PreprocessedSplit(
-        train=transform_features(train_features, fitted),
-        test=transform_features(test_features, fitted),
-        preprocessor=fitted,
+
+    combined_asset = _combine_train_test_table(
+        train_features.asset_features,
+        test_features.asset_features,
     )
+    combined_macro = _combine_train_test_table(
+        train_features.macro_features,
+        test_features.macro_features,
+    )
+    combined_spectral = _combine_train_test_table(
+        train_features.spectral_features,
+        test_features.spectral_features,
+    )
+
+    processed_asset = _rolling_standardize_table(combined_asset, fitted.asset, config)
+    processed_macro = _rolling_standardize_table(combined_macro, fitted.macro, config)
+    processed_spectral = _rolling_standardize_table(combined_spectral, fitted.spectral, config)
+
+    train_asset, test_asset = _split_processed_table(processed_asset)
+    train_macro, test_macro = _split_processed_table(processed_macro)
+    train_spectral, test_spectral = _split_processed_table(processed_spectral)
+
+    train = FeatureBundle(
+        asset_features=train_asset,
+        macro_features=train_macro,
+        spectral_features=train_spectral,
+        decision_dates=train_features.decision_dates,
+        tickers=train_features.tickers,
+        asset_feature_columns=tuple(
+            column for column in train_asset.columns if column not in {"date", "ticker"}
+        ),
+        macro_feature_columns=tuple(
+            column for column in train_macro.columns if column != "date"
+        ),
+        spectral_feature_columns=tuple(
+            column for column in train_spectral.columns if column != "date"
+        ),
+    )
+    test = FeatureBundle(
+        asset_features=test_asset,
+        macro_features=test_macro,
+        spectral_features=test_spectral,
+        decision_dates=test_features.decision_dates,
+        tickers=test_features.tickers,
+        asset_feature_columns=tuple(
+            column for column in test_asset.columns if column not in {"date", "ticker"}
+        ),
+        macro_feature_columns=tuple(column for column in test_macro.columns if column != "date"),
+        spectral_feature_columns=tuple(
+            column for column in test_spectral.columns if column != "date"
+        ),
+    )
+    return PreprocessedSplit(train=train, test=test, preprocessor=fitted)

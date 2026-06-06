@@ -58,11 +58,12 @@ def test_production_api_requires_explicit_train_and_test_inputs() -> None:
     )
 
 
-def test_environment_modules_do_not_import_sklearn() -> None:
+def test_preprocessing_and_environment_modules_do_not_import_sklearn() -> None:
     import finrl.env.accounting as accounting
     import finrl.env.rewards as rewards
     import finrl.env.trading_env as trading_env
+    import finrl.features.preprocessing as preprocessing
 
-    for module in (accounting, rewards, trading_env):
+    for module in (accounting, rewards, trading_env, preprocessing):
         source = inspect.getsource(module)
         assert "sklearn" not in source

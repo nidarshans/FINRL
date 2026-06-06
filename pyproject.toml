@@ -12,7 +12,6 @@ dependencies = [
     "jax>=0.4.0",
     "numpy>=1.24",
     "polars>=1.0",
-    "scikit-learn>=1.4",
     "yfinance>=0.2",
 ]
 

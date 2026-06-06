@@ -1,4 +1,4 @@
-"""Tests for train-window-fitted sklearn preprocessing."""
+"""Tests for chronological rolling preprocessing."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _bundle(
             {
                 "date": day,
                 "ticker": "BBB",
-                "return": value + 1.0,
+                "return": value + 10.0,
                 "return_percentile_rank": 0.75,
             }
         )
@@ -68,7 +68,7 @@ def _bundle(
     )
 
 
-def test_fit_preprocessors_records_train_window() -> None:
+def test_fit_preprocessors_records_train_window_and_rolling_metadata() -> None:
     train = _bundle(
         ("2024-01-05", "2024-01-12"),
         (1.0, 3.0),
@@ -76,62 +76,124 @@ def test_fit_preprocessors_records_train_window() -> None:
         (100.0, 110.0),
     )
 
-    fitted = fit_preprocessors(train, PreprocessingConfig())
+    fitted = fit_preprocessors(train, PreprocessingConfig(rolling_window=2))
 
     assert fitted.fit_window.start == date(2024, 1, 5)
     assert fitted.fit_window.end == date(2024, 1, 12)
+    assert fitted.asset.group_columns == ("ticker",)
+    assert fitted.asset.rolling_window == 2
 
 
-def test_fit_transform_uses_train_statistics_for_test_window() -> None:
+def test_asset_features_are_standardized_per_ticker_chronologically() -> None:
     train = _bundle(
-        ("2024-01-05", "2024-01-12"),
-        (1.0, 3.0),
-        (10.0, 12.0),
-        (100.0, 110.0),
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0),
+        (10.0, 12.0, 14.0),
+        (100.0, 110.0, 120.0),
+    )
+    test = _bundle(("2024-01-26",), (7.0,), (16.0,), (130.0,))
+
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
+    aaa_values = (
+        split.train.asset_features.filter(pl.col("ticker") == "AAA")
+        .sort("date")
+        .get_column("return")
+        .to_list()
+    )
+    bbb_values = (
+        split.train.asset_features.filter(pl.col("ticker") == "BBB")
+        .sort("date")
+        .get_column("return")
+        .to_list()
+    )
+
+    assert_allclose(aaa_values, [0.0, 0.707107, 0.707107], rtol=RTOL, atol=ATOL)
+    assert_allclose(bbb_values, [0.0, 0.707107, 0.707107], rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        split.test.asset_features.filter(pl.col("ticker") == "AAA")["return"][0],
+        0.707107,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
+def test_macro_and_spectral_features_roll_over_time() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0),
+        (10.0, 12.0, 14.0),
+        (100.0, 110.0, 120.0),
+    )
+    test = _bundle(("2024-01-26",), (7.0,), (16.0,), (130.0,))
+
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
+
+    assert_allclose(
+        split.train.macro_features.get_column("macro_vix_diff").to_list(),
+        [0.0, 0.707107, 0.707107],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        split.train.spectral_features.get_column("volume_eigen_0").to_list(),
+        [0.0, 0.707107, 0.707107],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
+def test_future_test_values_do_not_change_prior_train_or_test_rows() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0),
+        (10.0, 12.0, 14.0),
+        (100.0, 110.0, 120.0),
     )
     test = _bundle(
-        ("2024-01-19",),
-        (1_000.0,),
-        (9_999.0,),
-        (999_999.0,),
+        ("2024-01-26", "2024-02-02"),
+        (7.0, 9.0),
+        (16.0, 18.0),
+        (130.0, 140.0),
+    )
+    changed_future = _bundle(
+        ("2024-01-26", "2024-02-02"),
+        (7.0, 9_999.0),
+        (16.0, 99_999.0),
+        (130.0, 999_999.0),
     )
 
-    split = fit_transform_train_transform_test(train, test, PreprocessingConfig())
-    train_return_values = split.train.asset_features.get_column("return").to_list()
+    base = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
+    changed = fit_transform_train_transform_test(
+        train,
+        changed_future,
+        PreprocessingConfig(rolling_window=2),
+    )
 
     assert_allclose(
-        train_return_values,
-        [-1.341641, -0.447214, 0.447214, 1.341641],
+        base.train.asset_features.get_column("return").to_list(),
+        changed.train.asset_features.get_column("return").to_list(),
         rtol=RTOL,
         atol=ATOL,
     )
-    assert split.preprocessor.asset.pipeline is not None
     assert_allclose(
-        split.preprocessor.asset.pipeline.named_steps["scaler"].mean_,
-        [2.5],
-        rtol=RTOL,
-        atol=ATOL,
-    )
-
-
-def test_transforming_different_test_values_does_not_change_fit_metadata() -> None:
-    train = _bundle(
-        ("2024-01-05", "2024-01-12"),
-        (1.0, 3.0),
-        (10.0, 12.0),
-        (100.0, 110.0),
-    )
-    mild_test = _bundle(("2024-01-19",), (4.0,), (14.0,), (120.0,))
-    extreme_test = _bundle(("2024-01-19",), (10_000.0,), (99_999.0,), (999_999.0,))
-    fitted = fit_preprocessors(train, PreprocessingConfig())
-
-    transform_features(mild_test, fitted)
-    transform_features(extreme_test, fitted)
-
-    assert fitted.asset.pipeline is not None
-    assert_allclose(
-        fitted.asset.pipeline.named_steps["scaler"].mean_,
-        [2.5],
+        base.test.asset_features.filter(pl.col("date") == date(2024, 1, 26))[
+            "return"
+        ].to_list(),
+        changed.test.asset_features.filter(pl.col("date") == date(2024, 1, 26))[
+            "return"
+        ].to_list(),
         rtol=RTOL,
         atol=ATOL,
     )
@@ -146,7 +208,11 @@ def test_shapes_and_identifiers_are_preserved() -> None:
     )
     test = _bundle(("2024-01-19",), (5.0,), (14.0,), (120.0,))
 
-    split = fit_transform_train_transform_test(train, test, PreprocessingConfig())
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
 
     assert split.train.asset_features.shape == train.asset_features.shape
     assert split.test.asset_features.shape == test.asset_features.shape
@@ -158,7 +224,7 @@ def test_shapes_and_identifiers_are_preserved() -> None:
     ]
 
 
-def test_rank_columns_are_not_globally_scaled() -> None:
+def test_rank_columns_are_not_standardized() -> None:
     train = _bundle(
         ("2024-01-05", "2024-01-12"),
         (1.0, 3.0),
@@ -167,12 +233,16 @@ def test_rank_columns_are_not_globally_scaled() -> None:
     )
     test = _bundle(("2024-01-19",), (5.0,), (14.0,), (120.0,))
 
-    split = fit_transform_train_transform_test(train, test, PreprocessingConfig())
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
 
     assert split.train.asset_features.get_column("return_percentile_rank").to_list() == [
         0.25,
-        0.75,
         0.25,
+        0.75,
         0.75,
     ]
     assert split.test.asset_features.get_column("return_percentile_rank").to_list() == [
@@ -181,7 +251,7 @@ def test_rank_columns_are_not_globally_scaled() -> None:
     ]
 
 
-def test_clipping_runs_before_scaling() -> None:
+def test_clipping_runs_before_rolling_standardization() -> None:
     train = _bundle(
         ("2024-01-05", "2024-01-12"),
         (1.0, 3.0),
@@ -193,13 +263,13 @@ def test_clipping_runs_before_scaling() -> None:
     split = fit_transform_train_transform_test(
         train,
         test,
-        PreprocessingConfig(clip_lower=-10.0, clip_upper=10.0),
+        PreprocessingConfig(rolling_window=2, clip_lower=-10.0, clip_upper=10.0),
     )
 
     assert split.test.asset_features.get_column("return").max() < 10.0
 
 
-def test_missing_values_are_imputed_from_train_window() -> None:
+def test_missing_values_are_filled_without_future_rows() -> None:
     train = _bundle(
         ("2024-01-05", "2024-01-12"),
         (1.0, 3.0),
@@ -211,7 +281,7 @@ def test_missing_values_are_imputed_from_train_window() -> None:
             {
                 "date": ["2024-01-19", "2024-01-19"],
                 "ticker": ["AAA", "BBB"],
-                "return": [None, 6.0],
+                "return": [None, 999.0],
                 "return_percentile_rank": [0.25, 0.75],
             }
         ).with_columns(pl.col("date").cast(pl.Date)),
@@ -228,8 +298,31 @@ def test_missing_values_are_imputed_from_train_window() -> None:
         spectral_feature_columns=("volume_eigen_0",),
     )
 
-    split = fit_transform_train_transform_test(train, test, PreprocessingConfig())
+    split = fit_transform_train_transform_test(
+        train,
+        test,
+        PreprocessingConfig(rolling_window=2),
+    )
 
     assert split.test.asset_features.select(pl.col("return").is_null().sum()).item() == 0
     assert split.test.macro_features.select(pl.col("macro_vix_diff").is_null().sum()).item() == 0
     assert split.test.spectral_features.select(pl.col("volume_eigen_0").is_null().sum()).item() == 0
+
+
+def test_transform_features_applies_rolling_within_supplied_history() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0),
+        (10.0, 12.0, 14.0),
+        (100.0, 110.0, 120.0),
+    )
+    fitted = fit_preprocessors(train, PreprocessingConfig(rolling_window=2))
+
+    transformed = transform_features(train, fitted)
+
+    assert_allclose(
+        transformed.macro_features.get_column("macro_vix_diff").to_list(),
+        [0.0, 0.707107, 0.707107],
+        rtol=RTOL,
+        atol=ATOL,
+    )

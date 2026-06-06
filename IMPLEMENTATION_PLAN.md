@@ -28,7 +28,7 @@ The numbered phase sections below preserve the requested planning breakdown. Imp
 - Use `jax.numpy` in environment/accounting/reward logic.
 - Support `jax.jit`, `jax.lax.scan`, float32 inputs, and deterministic outputs for environment functions.
 - Tests must use small deterministic arrays and pass on CPU-only JAX.
-- Use sklearn only for offline preprocessing fitted on train windows.
+- Use chronological rolling preprocessing only; do not fit full-window scalers.
 - Avoid look-ahead bias in every split, feature, benchmark, HMM, encoder, and PPO path.
 - Keep the v1 training loop Colab-friendly: single historical trajectory, modest memory use, minimal dependencies.
 - Keep full-universe training and GPU-only work out of unit tests and isolated to experiment scripts or notebooks.
@@ -479,11 +479,11 @@ Generate asset, macro, spectral, and optional Hawkes features using only informa
 - Spectral features use future covariance windows.
 - Hawkes implementation becomes too slow for Colab.
 
-## Phase 7: sklearn Preprocessing Pipeline
+## Phase 7: Rolling Preprocessing Pipeline
 
 ### Objective
 
-Implement offline preprocessing that fits only on train windows and transforms train/test consistently.
+Implement offline preprocessing that preserves strict chronological realism during training and evaluation. Do not fit full train-window scalers. Standardize features with rolling statistics computed per ticker for asset features and over time for macro/spectral features.
 
 ### Files to Create or Modify
 
@@ -502,27 +502,28 @@ Implement offline preprocessing that fits only on train windows and transforms t
 - `fit_preprocessors(train_features, config)`
 - `transform_features(features, fitted_preprocessors)`
 - `fit_transform_train_transform_test(train_features, test_features, config)`
-- Optional sklearn components:
-  - imputer
-  - scaler
-  - clipping or winsorization transformer
+- Optional components:
+  - causal forward fill / default fill
+  - rolling standardization
+  - clipping or winsorization
 
 ### Tests to Write
 
-- Fit dates are train-only.
-- Test data is transformed using train-fitted transformers.
-- Full-dataset fitting is impossible through production API.
+- Fit metadata records train dates only.
+- Train and test data are transformed chronologically with no future rows.
+- Full-dataset fitting and full train-window standardization are impossible through production API.
 - Shapes and date indexes are preserved.
-- Cross-sectional ranks are not globally scaled in a way that changes their intended meaning.
-- No sklearn object is used inside environment step or PPO rollout functions.
+- Cross-sectional ranks are not standardized in a way that changes their intended meaning.
+- No sklearn object is used inside preprocessing, environment step, or PPO rollout functions.
 
 ### Acceptance Criteria
 
 - Production preprocessing API requires explicit train/test inputs or explicit train date range.
 - Fitted transformer metadata records fit start/end dates.
-- Tests fail if test-window data changes fitted scaler statistics.
+- Tests fail if future train/test values change earlier transformed rows.
 - Preprocessing tests use small deterministic arrays and do not require GPU.
 - No JAX environment dependency imports sklearn.
+- No preprocessing code imports sklearn.
 
 ### Dependencies on Prior Phases
 
@@ -533,7 +534,7 @@ Implement offline preprocessing that fits only on train windows and transforms t
 
 - Convenience APIs accidentally fit on all data.
 - Flattening asset tensors loses asset/date alignment.
-- sklearn dependencies leak into JAX training loops.
+- Rolling statistics accidentally include future rows.
 
 ## Phase 8: Walk-Forward Splitter
 
