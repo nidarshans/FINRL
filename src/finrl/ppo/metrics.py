@@ -25,6 +25,8 @@ class PPOTrainMetrics:
     grad_norm: Array
     mean_episode_return: Array
     mean_reward: Array
+    portfolio_entropy: Array
+    effective_assets: Array
     advantage_mean: Array
     advantage_std: Array
     ratio_mean: Array

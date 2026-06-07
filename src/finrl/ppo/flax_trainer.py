@@ -119,6 +119,13 @@ def normalize_advantages(advantages: Array, epsilon: float = 1e-8) -> Array:
     return jnp.where(std > epsilon, centered / (std + epsilon), jnp.zeros_like(advantages))
 
 
+def portfolio_allocation_entropy(weights: Array, epsilon: float = 1e-8) -> Array:
+    """Return Shannon entropy of long-only portfolio weights."""
+
+    safe_weights = jnp.clip(weights, epsilon, 1.0)
+    return -jnp.sum(weights * jnp.log(safe_weights), axis=-1)
+
+
 def freeze_rollout_batch(
     rollout: RolloutBatch,
     config: ProductionPPOConfig,
@@ -212,6 +219,7 @@ def _loss_for_params(
         huber_delta=config.value_huber_delta,
     )
     entropy = jnp.mean(entropies)
+    allocation_entropy = jnp.mean(portfolio_allocation_entropy(batch.actions))
     ratios = jnp.exp(new_log_probs - batch.old_log_probs)
     total = ppo_total_loss(
         actor_loss,
@@ -219,7 +227,7 @@ def _loss_for_params(
         entropy,
         config.value_coef,
         config.entropy_coef,
-    )
+    ) + config.portfolio_entropy_coef * allocation_entropy
     metrics = PPOTrainMetrics(
         policy_loss=actor_loss,
         actor_loss=actor_loss,
@@ -237,6 +245,8 @@ def _loss_for_params(
         grad_norm=jnp.asarray(0.0, dtype=jnp.float32),
         mean_episode_return=jnp.sum(batch.rewards),
         mean_reward=jnp.mean(batch.rewards),
+        portfolio_entropy=allocation_entropy,
+        effective_assets=jnp.exp(allocation_entropy),
         advantage_mean=jnp.mean(batch.advantages),
         advantage_std=jnp.std(batch.advantages),
         ratio_mean=jnp.mean(ratios),

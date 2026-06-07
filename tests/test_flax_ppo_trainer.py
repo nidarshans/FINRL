@@ -11,6 +11,7 @@ from numpy.testing import assert_allclose
 from finrl.env.trading_env import EnvConfig, EnvState
 from finrl.ppo import (
     PPOUpdateBatchFlax,
+    ProductionPPOTrainState,
     ProductionPPOConfig,
     RolloutBatch,
     action_log_prob,
@@ -19,6 +20,7 @@ from finrl.ppo import (
     evaluate_frozen_flax_policy,
     freeze_rollout_batch,
     initialize_ppo_train_state,
+    portfolio_allocation_entropy,
     save_policy_checkpoint,
     load_policy_checkpoint,
     train_flax_ppo_on_split,
@@ -152,6 +154,71 @@ def test_one_minibatch_update_changes_actor_and_critic_params() -> None:
     assert jnp.isfinite(result.metrics.advantage_std)
     assert result.metrics.ratio_min > 0.0
     assert result.metrics.ratio_max >= result.metrics.ratio_min
+
+
+def test_portfolio_allocation_entropy_matches_hand_computed_fixture() -> None:
+    weights = jnp.array(
+        [
+            [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
+            [1.0, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+
+    entropy = portfolio_allocation_entropy(weights)
+
+    assert_allclose(entropy[0], jnp.log(3.0), rtol=1e-6, atol=1e-6)
+    assert_allclose(entropy[1], 0.0, rtol=1e-6, atol=1e-6)
+
+
+def test_portfolio_entropy_penalty_increases_total_loss() -> None:
+    base_config = _config(use_value_clipping=False)
+    penalized_config = _config(
+        use_value_clipping=False,
+        portfolio_entropy_coef=0.5,
+    )
+    state = initialize_ppo_train_state(jax.random.PRNGKey(11), base_config)
+    states = jnp.ones((3, base_config.state_dim), dtype=jnp.float32)
+    actor_logits = jax.vmap(
+        lambda row: state.actor.apply_fn({"params": state.actor.params}, row)
+    )(states)
+    actions = jnp.ones((3, base_config.action_dim), dtype=jnp.float32)
+    actions = actions / base_config.action_dim
+    old_log_probs = jax.vmap(
+        lambda logit, action: action_log_prob(logit, action, base_config)
+    )(actor_logits, actions)
+    batch = PPOUpdateBatchFlax(
+        states=states,
+        actions=actions,
+        old_log_probs=old_log_probs,
+        advantages=jnp.zeros((3,), dtype=jnp.float32),
+        returns=jnp.zeros((3,), dtype=jnp.float32),
+        old_values=jnp.zeros((3,), dtype=jnp.float32),
+        rewards=jnp.zeros((3,), dtype=jnp.float32),
+        turnovers=jnp.zeros((3,), dtype=jnp.float32),
+        transaction_costs=jnp.zeros((3,), dtype=jnp.float32),
+        drawdowns=jnp.zeros((3,), dtype=jnp.float32),
+    )
+
+    _, base_metrics = update_minibatch(
+        ProductionPPOTrainState(
+            actor=state.actor,
+            critic=state.critic,
+            config=base_config,
+        ),
+        batch,
+    )
+    _, penalized_metrics = update_minibatch(
+        ProductionPPOTrainState(
+            actor=state.actor,
+            critic=state.critic,
+            config=penalized_config,
+        ),
+        batch,
+    )
+
+    assert_allclose(base_metrics.portfolio_entropy, jnp.log(3.0), rtol=1e-5)
+    assert penalized_metrics.total_loss > base_metrics.total_loss
 
 
 def test_value_loss_decreases_on_tiny_supervised_fixture() -> None:

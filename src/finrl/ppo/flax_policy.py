@@ -33,6 +33,7 @@ class ProductionPPOConfig:
     value_clip_epsilon: float = 0.2
     value_coef: float = 0.5
     entropy_coef: float = 0.0
+    portfolio_entropy_coef: float = 0.0
     learning_rate: float = 1e-3
     update_epochs: int = 4
     minibatch_size: int = 64
@@ -78,6 +79,8 @@ class ProductionPPOConfig:
             raise ValueError("clip epsilons must be positive.")
         if self.learning_rate <= 0.0:
             raise ValueError("learning_rate must be positive.")
+        if self.portfolio_entropy_coef < 0.0:
+            raise ValueError("portfolio_entropy_coef must be non-negative.")
         if self.update_epochs <= 0 or self.minibatch_size <= 0:
             raise ValueError("update_epochs and minibatch_size must be positive.")
         if self.target_kl <= 0.0 or self.max_grad_norm <= 0.0:
