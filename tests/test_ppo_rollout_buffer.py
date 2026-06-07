@@ -97,6 +97,11 @@ def test_collect_rollout_uses_environment_step_accounting() -> None:
     assert rollout_length(buffer.batch) == 4
     assert buffer.batch.states.shape == (4, config.state_dim)
     assert buffer.batch.actions.shape == (4, config.action_dim)
+    assert_allclose(buffer.batch.dones, jnp.zeros((4,), dtype=jnp.float32))
+    assert_allclose(
+        buffer.batch.truncations,
+        jnp.array([0.0, 0.0, 0.0, 1.0], dtype=jnp.float32),
+    )
     assert_allclose(buffer.batch.rewards[0], manual_first.reward, rtol=1e-6, atol=1e-8)
     assert_allclose(
         buffer.step_results.state.weights[0],
@@ -153,6 +158,7 @@ def _fake_batch(n_steps: int = 5) -> RolloutBatch:
         rewards=ids + 30.0,
         values=ids + 40.0,
         dones=jnp.zeros((n_steps,), dtype=jnp.float32),
+        truncations=jnp.zeros((n_steps,), dtype=jnp.float32),
         entropies=ids + 50.0,
         turnovers=ids + 60.0,
         transaction_costs=ids + 70.0,

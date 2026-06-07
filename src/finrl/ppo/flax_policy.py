@@ -40,6 +40,8 @@ class ProductionPPOConfig:
     max_grad_norm: float = 0.5
     normalize_advantages: bool = True
     use_value_clipping: bool = True
+    value_loss_type: str = "mse"
+    value_huber_delta: float = 1.0
 
     @property
     def action_dim(self) -> int:
@@ -80,6 +82,10 @@ class ProductionPPOConfig:
             raise ValueError("update_epochs and minibatch_size must be positive.")
         if self.target_kl <= 0.0 or self.max_grad_norm <= 0.0:
             raise ValueError("target_kl and max_grad_norm must be positive.")
+        if self.value_loss_type not in {"mse", "huber"}:
+            raise ValueError("value_loss_type must be 'mse' or 'huber'.")
+        if self.value_huber_delta <= 0.0:
+            raise ValueError("value_huber_delta must be positive.")
 
 
 class ProductionPortfolioAction(NamedTuple):

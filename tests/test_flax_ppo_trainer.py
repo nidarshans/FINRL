@@ -12,6 +12,7 @@ from finrl.env.trading_env import EnvConfig, EnvState
 from finrl.ppo import (
     PPOUpdateBatchFlax,
     ProductionPPOConfig,
+    RolloutBatch,
     action_log_prob,
     compute_gae,
     critic_loss,
@@ -91,6 +92,38 @@ def test_compute_gae_matches_hand_computed_fixture() -> None:
     assert_allclose(returns, expected_returns, rtol=1e-6, atol=1e-6)
 
 
+def test_freeze_rollout_batch_bootstraps_truncated_final_step() -> None:
+    config = _config(
+        gamma=0.9,
+        gae_lambda=0.8,
+        normalize_advantages=False,
+        phi_dim=1,
+    )
+    rollout = RolloutBatch(
+        states=jnp.zeros((1, config.state_dim), dtype=jnp.float32),
+        actions=jnp.ones((1, config.action_dim), dtype=jnp.float32) / config.action_dim,
+        old_log_probs=jnp.zeros((1,), dtype=jnp.float32),
+        rewards=jnp.array([1.0], dtype=jnp.float32),
+        values=jnp.array([0.5], dtype=jnp.float32),
+        dones=jnp.array([0.0], dtype=jnp.float32),
+        truncations=jnp.array([1.0], dtype=jnp.float32),
+        entropies=jnp.zeros((1,), dtype=jnp.float32),
+        turnovers=jnp.zeros((1,), dtype=jnp.float32),
+        transaction_costs=jnp.zeros((1,), dtype=jnp.float32),
+        drawdowns=jnp.zeros((1,), dtype=jnp.float32),
+        net_returns=jnp.zeros((1,), dtype=jnp.float32),
+    )
+
+    batch = freeze_rollout_batch(
+        rollout,
+        config,
+        bootstrap_value=jnp.array(0.25, dtype=jnp.float32),
+    )
+
+    assert_allclose(batch.advantages, jnp.array([0.725], dtype=jnp.float32))
+    assert_allclose(batch.returns, jnp.array([1.225], dtype=jnp.float32))
+
+
 def test_one_minibatch_update_changes_actor_and_critic_params() -> None:
     config = _config()
     phi, regimes, returns, spy = _arrays()
@@ -112,6 +145,13 @@ def test_one_minibatch_update_changes_actor_and_critic_params() -> None:
     assert _tree_delta(initial.critic.params, result.train_state.critic.params) > 0.0
     assert result.metrics.updates_completed == 1.0
     assert jnp.isfinite(result.metrics.total_loss)
+    assert jnp.isfinite(result.metrics.policy_loss)
+    assert jnp.isfinite(result.metrics.post_update_approx_kl)
+    assert jnp.isfinite(result.metrics.mean_episode_return)
+    assert jnp.isfinite(result.metrics.advantage_mean)
+    assert jnp.isfinite(result.metrics.advantage_std)
+    assert result.metrics.ratio_min > 0.0
+    assert result.metrics.ratio_max >= result.metrics.ratio_min
 
 
 def test_value_loss_decreases_on_tiny_supervised_fixture() -> None:
@@ -151,6 +191,21 @@ def test_value_loss_decreases_on_tiny_supervised_fixture() -> None:
     after_loss = critic_loss(after_values, batch.returns, use_clipping=False)
 
     assert after_loss < before_loss
+
+
+def test_huber_critic_loss_matches_hand_computed_fixture() -> None:
+    values = jnp.array([0.0, 3.0], dtype=jnp.float32)
+    returns = jnp.array([2.0, 1.0], dtype=jnp.float32)
+
+    actual = critic_loss(
+        values,
+        returns,
+        use_clipping=False,
+        loss_type="huber",
+        huber_delta=1.0,
+    )
+
+    assert_allclose(actual, 1.5, rtol=1e-6, atol=1e-6)
 
 
 def test_frozen_evaluation_does_not_update_train_state() -> None:

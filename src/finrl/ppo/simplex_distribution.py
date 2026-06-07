@@ -18,6 +18,18 @@ def _safe_action(action: Array) -> Array:
     return jnp.clip(action, 1e-12, 1.0)
 
 
+def validate_simplex_action(action: Array, atol: float = 1e-5) -> None:
+    """Raise when an eager action is not a finite long-only simplex vector."""
+
+    action_array = jnp.asarray(action)
+    if bool(jnp.any(~jnp.isfinite(action_array))):
+        raise ValueError("action contains NaN or infinite values.")
+    if bool(jnp.any(action_array < -atol)):
+        raise ValueError("action contains negative portfolio weights.")
+    if not bool(jnp.isclose(jnp.sum(action_array, axis=-1), 1.0, atol=atol).all()):
+        raise ValueError("action weights must sum to 1.")
+
+
 @dataclass(frozen=True, slots=True)
 class DirichletPortfolioDistribution:
     """Dirichlet policy whose mean allocation comes from actor logits."""

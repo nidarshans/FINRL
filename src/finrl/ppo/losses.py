@@ -27,6 +27,16 @@ def value_loss(values: Array, returns: Array) -> Array:
     return jnp.mean(jnp.square(values - returns))
 
 
+def huber_value_loss(values: Array, returns: Array, delta: float = 1.0) -> Array:
+    """Return Huber value prediction loss for large-return robustness."""
+
+    error = values - returns
+    abs_error = jnp.abs(error)
+    quadratic = jnp.minimum(abs_error, delta)
+    linear = abs_error - quadratic
+    return jnp.mean(0.5 * jnp.square(quadratic) + delta * linear)
+
+
 def clipped_value_loss(
     values: Array,
     old_values: Array,
@@ -68,11 +78,17 @@ def critic_loss(
     old_values: Array | None = None,
     clip_epsilon: float = 0.2,
     use_clipping: bool = True,
+    loss_type: str = "mse",
+    huber_delta: float = 1.0,
 ) -> Array:
     """Return production critic loss with optional PPO value clipping."""
 
     if old_values is not None and use_clipping:
         return clipped_value_loss(values, old_values, returns, clip_epsilon)
+    if loss_type == "huber":
+        return huber_value_loss(values, returns, huber_delta)
+    if loss_type != "mse":
+        raise ValueError("loss_type must be 'mse' or 'huber'.")
     return value_loss(values, returns)
 
 

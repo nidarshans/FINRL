@@ -40,6 +40,7 @@ from finrl.ppo.losses import (
     clipped_value_loss,
     critic_loss,
     entropy_bonus,
+    huber_value_loss,
     ppo_actor_loss,
     ppo_clip_loss,
     ppo_total_loss,
@@ -66,6 +67,7 @@ from finrl.ppo.simplex_distribution import (
     DirichletPortfolioDistribution,
     action_log_prob,
     policy_entropy,
+    validate_simplex_action,
 )
 from finrl.ppo.rollout import RolloutBatch, RolloutBuffer, collect_rollout
 from finrl.ppo.trainer import (
@@ -125,6 +127,7 @@ __all__ = [
     "explained_variance",
     "freeze_ppo_batch",
     "freeze_rollout_batch",
+    "huber_value_loss",
     "initialize_actor_critic",
     "initialize_ppo_train_state",
     "load_policy_checkpoint",
@@ -150,5 +153,6 @@ __all__ = [
     "train_ppo_on_split",
     "update_minibatch",
     "validate_rollout_batch",
+    "validate_simplex_action",
     "value_loss",
 ]

@@ -13,15 +13,23 @@ from finrl.types import Array
 class PPOTrainMetrics:
     """Scalar diagnostics reported by production PPO updates."""
 
+    policy_loss: Array
     actor_loss: Array
     critic_loss: Array
     total_loss: Array
     entropy: Array
     approx_kl: Array
+    post_update_approx_kl: Array
     clip_fraction: Array
     explained_variance: Array
     grad_norm: Array
+    mean_episode_return: Array
     mean_reward: Array
+    advantage_mean: Array
+    advantage_std: Array
+    ratio_mean: Array
+    ratio_min: Array
+    ratio_max: Array
     mean_turnover: Array
     mean_transaction_cost: Array
     mean_drawdown: Array

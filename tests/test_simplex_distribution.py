@@ -12,6 +12,7 @@ from finrl.ppo import (
     ProductionPPOConfig,
     action_log_prob,
     policy_entropy,
+    validate_simplex_action,
 )
 
 
@@ -79,3 +80,18 @@ def test_sampling_is_reproducible_for_fixed_key() -> None:
     assert_allclose(sample_a, sample_b, rtol=1e-6, atol=1e-8)
     assert jnp.all(sample_a >= 0.0)
     assert_allclose(jnp.sum(sample_a), 1.0, rtol=1e-6, atol=1e-8)
+
+
+def test_validate_simplex_action_rejects_invalid_weights() -> None:
+    validate_simplex_action(jnp.array([0.2, 0.3, 0.5], dtype=jnp.float32))
+
+    for action in (
+        jnp.array([0.2, -0.1, 0.9], dtype=jnp.float32),
+        jnp.array([0.2, 0.3, 0.4], dtype=jnp.float32),
+        jnp.array([0.2, jnp.nan, 0.8], dtype=jnp.float32),
+    ):
+        try:
+            validate_simplex_action(action)
+        except ValueError:
+            continue
+        raise AssertionError("invalid simplex action was accepted")

@@ -68,10 +68,17 @@ class ProductionPPOEvaluationResult:
 
 
 def _optimizer(config: ProductionPPOConfig) -> optax.GradientTransformation:
-    return optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
-        optax.adam(config.learning_rate),
-    )
+    return optax.adam(config.learning_rate)
+
+
+def _tree_global_norm(tree: object) -> Array:
+    """Return the global L2 norm of a gradient pytree."""
+
+    squared_norms = [
+        jnp.sum(jnp.square(leaf))
+        for leaf in jax.tree_util.tree_leaves(tree)
+    ]
+    return jnp.sqrt(jnp.sum(jnp.asarray(squared_norms)))
 
 
 def initialize_ppo_train_state(
@@ -113,12 +120,19 @@ def normalize_advantages(advantages: Array, epsilon: float = 1e-8) -> Array:
 def freeze_rollout_batch(
     rollout: RolloutBatch,
     config: ProductionPPOConfig,
+    bootstrap_value: Array | None = None,
 ) -> PPOUpdateBatchFlax:
     """Compute and freeze advantages/returns from a collected rollout."""
 
+    values = rollout.values
+    if bootstrap_value is not None:
+        bootstrap = jnp.atleast_1d(
+            jnp.asarray(bootstrap_value, dtype=rollout.values.dtype)
+        )
+        values = jnp.concatenate([rollout.values, bootstrap])
     advantages, returns = compute_gae(
         rollout.rewards,
-        rollout.values,
+        values,
         rollout.dones,
         config.gamma,
         config.gae_lambda,
@@ -192,8 +206,11 @@ def _loss_for_params(
         old_values=batch.old_values,
         clip_epsilon=config.value_clip_epsilon,
         use_clipping=config.use_value_clipping,
+        loss_type=config.value_loss_type,
+        huber_delta=config.value_huber_delta,
     )
     entropy = jnp.mean(entropies)
+    ratios = jnp.exp(new_log_probs - batch.old_log_probs)
     total = ppo_total_loss(
         actor_loss,
         value_loss,
@@ -202,11 +219,13 @@ def _loss_for_params(
         config.entropy_coef,
     )
     metrics = PPOTrainMetrics(
+        policy_loss=actor_loss,
         actor_loss=actor_loss,
         critic_loss=value_loss,
         total_loss=total,
         entropy=entropy,
         approx_kl=approximate_kl(batch.old_log_probs, new_log_probs),
+        post_update_approx_kl=approximate_kl(batch.old_log_probs, new_log_probs),
         clip_fraction=clip_fraction(
             batch.old_log_probs,
             new_log_probs,
@@ -214,7 +233,13 @@ def _loss_for_params(
         ),
         explained_variance=explained_variance(values, batch.returns),
         grad_norm=jnp.asarray(0.0, dtype=jnp.float32),
+        mean_episode_return=jnp.sum(batch.rewards),
         mean_reward=jnp.mean(batch.rewards),
+        advantage_mean=jnp.mean(batch.advantages),
+        advantage_std=jnp.std(batch.advantages),
+        ratio_mean=jnp.mean(ratios),
+        ratio_min=jnp.min(ratios),
+        ratio_max=jnp.max(ratios),
         mean_turnover=jnp.mean(batch.turnovers),
         mean_transaction_cost=jnp.mean(batch.transaction_costs),
         mean_drawdown=jnp.mean(batch.drawdowns),
@@ -245,17 +270,31 @@ def update_minibatch(
     )(train_state.actor.params, train_state.critic.params)
     del loss
     actor_grads, critic_grads = grads
+    grad_norm = _tree_global_norm(grads)
+    scale = jnp.minimum(
+        1.0,
+        train_state.config.max_grad_norm / (grad_norm + 1e-8),
+    )
+    actor_grads = jax.tree_util.tree_map(lambda grad: grad * scale, actor_grads)
+    critic_grads = jax.tree_util.tree_map(lambda grad: grad * scale, critic_grads)
+    _, pre_update_metrics = _loss_for_params(
+        train_state.actor.params,
+        train_state.critic.params,
+        batch,
+        config,
+    )
     new_actor = train_state.actor.apply_gradients(grads=actor_grads)
     new_critic = train_state.critic.apply_gradients(grads=critic_grads)
-    _, metrics = _loss_for_params(
+    _, post_update_metrics = _loss_for_params(
         new_actor.params,
         new_critic.params,
         batch,
         config,
     )
     metrics = dataclass_replace(
-        metrics,
-        grad_norm=optax.global_norm(grads),
+        pre_update_metrics,
+        grad_norm=grad_norm,
+        post_update_approx_kl=post_update_metrics.approx_kl,
         updates_completed=jnp.asarray(1.0, dtype=jnp.float32),
     )
     return (
@@ -310,7 +349,8 @@ def train_epoch(
         for minibatch in minibatches:
             state, metrics = update_minibatch(state, minibatch)
             all_metrics.append(metrics)
-            if float(jax.device_get(metrics.approx_kl)) > state.config.target_kl:
+            post_update_kl = float(jax.device_get(metrics.post_update_approx_kl))
+            if post_update_kl > state.config.target_kl:
                 stop = True
                 break
         epochs_completed += 1
@@ -353,7 +393,7 @@ def train_ppo_on_split(
         rollout_key,
         rollout_length=rollout_length,
     )
-    update_batch = freeze_rollout_batch(rollout.batch, config)
+    update_batch = freeze_rollout_batch(rollout.batch, config, rollout.bootstrap_value)
     state, metrics = train_epoch(state, update_batch, train_key)
     return ProductionPPOTrainingResult(
         train_state=state,

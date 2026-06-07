@@ -28,6 +28,7 @@ class RolloutBatch(NamedTuple):
     rewards: Array
     values: Array
     dones: Array
+    truncations: Array
     entropies: Array
     turnovers: Array
     transaction_costs: Array
@@ -42,6 +43,7 @@ class RolloutBuffer:
     batch: RolloutBatch
     final_env_state: EnvState
     step_results: StepResult
+    bootstrap_value: Array
 
 
 def _validate_rollout_inputs(
@@ -86,6 +88,9 @@ def collect_rollout(
     rng: Array,
     rollout_length: int | None = None,
     deterministic: bool = False,
+    bootstrap_phi: Array | None = None,
+    bootstrap_regime_probs: Array | None = None,
+    terminal: bool = False,
 ) -> RolloutBuffer:
     """Collect one production rollout using the existing environment step."""
 
@@ -99,6 +104,10 @@ def collect_rollout(
         ppo_config,
         length,
     )
+    if (bootstrap_phi is None) != (bootstrap_regime_probs is None):
+        raise ValueError(
+            "bootstrap_phi and bootstrap_regime_probs must be provided together."
+        )
     phi = phi[:length]
     regime_probs = regime_probs[:length]
     asset_returns = asset_returns[:length]
@@ -144,7 +153,22 @@ def collect_rollout(
         (phi, regime_probs, asset_returns, spy_returns),
     )
     states, actions, old_log_probs, rewards, values, entropies, step_results = outputs
-    dones = jnp.zeros_like(rewards).at[-1].set(1.0)
+    has_bootstrap = bootstrap_phi is not None and bootstrap_regime_probs is not None
+    if has_bootstrap:
+        bootstrap_state = build_ppo_state(
+            jnp.asarray(bootstrap_phi, dtype=jnp.float32),
+            jnp.asarray(bootstrap_regime_probs, dtype=jnp.float32),
+            final_env_state.weights,
+            final_env_state.drawdown,
+            final_env_state.previous_turnover,
+        )
+        bootstrap_value = critic.apply(critic_variables, bootstrap_state)
+    else:
+        bootstrap_value = jnp.asarray(0.0, dtype=jnp.float32)
+    final_done = 1.0 if terminal else 0.0
+    final_truncation = 0.0 if terminal else 1.0
+    dones = jnp.zeros_like(rewards).at[-1].set(final_done)
+    truncations = jnp.zeros_like(rewards).at[-1].set(final_truncation)
     batch = RolloutBatch(
         states=jax.lax.stop_gradient(states),
         actions=jax.lax.stop_gradient(actions),
@@ -152,6 +176,7 @@ def collect_rollout(
         rewards=jax.lax.stop_gradient(rewards),
         values=jax.lax.stop_gradient(values),
         dones=jax.lax.stop_gradient(dones),
+        truncations=jax.lax.stop_gradient(truncations),
         entropies=jax.lax.stop_gradient(entropies),
         turnovers=jax.lax.stop_gradient(step_results.turnover),
         transaction_costs=jax.lax.stop_gradient(step_results.transaction_cost),
@@ -162,4 +187,5 @@ def collect_rollout(
         batch=batch,
         final_env_state=final_env_state,
         step_results=step_results,
+        bootstrap_value=jax.lax.stop_gradient(bootstrap_value),
     )
