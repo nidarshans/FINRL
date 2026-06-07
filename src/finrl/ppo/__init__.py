@@ -9,7 +9,7 @@ from finrl.ppo.distributions import (
 )
 from finrl.ppo.checkpoints import load_policy_checkpoint, save_policy_checkpoint
 from finrl.ppo.gae import compute_gae
-from finrl.ppo.losses import entropy_bonus, ppo_clip_loss, value_loss
+from finrl.ppo.losses import clipped_value_loss, entropy_bonus, ppo_clip_loss, value_loss
 from finrl.ppo.policy import (
     ActorCriticState,
     PPOConfig,
@@ -25,9 +25,12 @@ from finrl.ppo.trainer import (
     PPOEvaluationResult,
     PPOTrainingResult,
     PolicyCheckpoint,
+    PPOUpdateBatch,
     collect_train_trajectory,
     evaluate_frozen_policy,
+    freeze_ppo_batch,
     initialize_actor_critic,
+    normalize_advantages,
     train_ppo_on_split,
 )
 from finrl.ppo.value import PortfolioCritic
@@ -43,15 +46,19 @@ __all__ = [
     "PortfolioActor",
     "PortfolioContext",
     "PortfolioCritic",
+    "PPOUpdateBatch",
     "build_ppo_state",
+    "clipped_value_loss",
     "collect_train_trajectory",
     "compute_gae",
     "dirichlet_concentration",
     "entropy_bonus",
     "evaluate_action_logprob",
     "evaluate_frozen_policy",
+    "freeze_ppo_batch",
     "initialize_actor_critic",
     "load_policy_checkpoint",
+    "normalize_advantages",
     "portfolio_entropy",
     "portfolio_logprob",
     "ppo_clip_loss",

@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import optax
 
 from finrl.env.trading_env import EnvState
 from finrl.ppo.distributions import (
@@ -33,10 +34,17 @@ class PPOConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_epsilon: float = 0.2
+    value_clip_eps: float = 0.2
     value_coef: float = 0.5
     entropy_coef: float = 0.0
     learning_rate: float = 1e-3
-    train_epochs: int = 1
+    ppo_epochs: int = 4
+    minibatch_size: int = 64
+    target_kl: float = 0.01
+    max_grad_norm: float = 0.5
+    normalize_advantages: bool = True
+    use_value_clipping: bool = True
+    train_epochs: int | None = None
     # Logits define a softmax mean; this scale controls Dirichlet exploration.
     dirichlet_concentration: float = 100.0
     min_concentration: float = 1e-3
@@ -46,6 +54,21 @@ class PPOConfig:
         """Return architecture-derived PPO state dimension."""
 
         return self.phi_dim + self.n_regimes + self.n_assets + 2
+
+    @property
+    def clip_eps(self) -> float:
+        """Alias for the PPO policy clip threshold."""
+
+        return self.clip_epsilon
+
+    @property
+    def update_epochs(self) -> int:
+        """Return the configured number of PPO epochs.
+
+        ``train_epochs`` is kept as a compatibility alias for older callers.
+        """
+
+        return self.ppo_epochs if self.train_epochs is None else self.train_epochs
 
     def __post_init__(self) -> None:
         if self.phi_dim <= 0 or self.n_regimes <= 0 or self.n_assets <= 0:
@@ -58,10 +81,20 @@ class PPOConfig:
             raise ValueError("gae_lambda must be in [0, 1].")
         if self.clip_epsilon <= 0.0:
             raise ValueError("clip_epsilon must be positive.")
+        if self.value_clip_eps <= 0.0:
+            raise ValueError("value_clip_eps must be positive.")
         if self.learning_rate <= 0.0:
             raise ValueError("learning_rate must be positive.")
-        if self.train_epochs <= 0:
-            raise ValueError("train_epochs must be positive.")
+        if self.ppo_epochs <= 0:
+            raise ValueError("ppo_epochs must be positive.")
+        if self.train_epochs is not None and self.train_epochs <= 0:
+            raise ValueError("train_epochs must be positive when provided.")
+        if self.minibatch_size <= 0:
+            raise ValueError("minibatch_size must be positive.")
+        if self.target_kl <= 0.0:
+            raise ValueError("target_kl must be positive.")
+        if self.max_grad_norm <= 0.0:
+            raise ValueError("max_grad_norm must be positive.")
         if self.dirichlet_concentration <= 0.0:
             raise ValueError("dirichlet_concentration must be positive.")
         if self.min_concentration <= 0.0:
@@ -91,6 +124,7 @@ class ActorCriticState(NamedTuple):
     actor_params: Params
     critic_params: Params
     step: Array
+    optimizer_state: optax.OptState | None = None
 
 
 def _glorot_uniform(key: Array, shape: tuple[int, int]) -> Array:

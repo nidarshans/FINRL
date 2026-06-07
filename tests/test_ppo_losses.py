@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from finrl.ppo import entropy_bonus, ppo_clip_loss, value_loss
+from finrl.ppo import clipped_value_loss, entropy_bonus, ppo_clip_loss, value_loss
 
 
 def test_ppo_clip_loss_is_finite_for_synthetic_trajectory() -> None:
@@ -25,3 +25,12 @@ def test_value_loss_and_entropy_bonus_are_finite() -> None:
     assert jnp.isfinite(value_loss(values, returns))
     assert jnp.isfinite(entropy_bonus(entropies))
 
+
+def test_clipped_value_loss_uses_larger_ppo_error() -> None:
+    values = jnp.array([2.0], dtype=jnp.float32)
+    old_values = jnp.array([0.0], dtype=jnp.float32)
+    returns = jnp.array([1.0], dtype=jnp.float32)
+
+    loss = clipped_value_loss(values, old_values, returns, clip_epsilon=0.2)
+
+    assert loss == jnp.array(1.0, dtype=jnp.float32)

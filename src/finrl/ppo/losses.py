@@ -27,8 +27,25 @@ def value_loss(values: Array, returns: Array) -> Array:
     return jnp.mean(jnp.square(values - returns))
 
 
+def clipped_value_loss(
+    values: Array,
+    old_values: Array,
+    returns: Array,
+    clip_epsilon: float,
+) -> Array:
+    """Return PPO clipped value-function loss."""
+
+    clipped_values = old_values + jnp.clip(
+        values - old_values,
+        -clip_epsilon,
+        clip_epsilon,
+    )
+    unclipped_loss = jnp.square(values - returns)
+    clipped_loss = jnp.square(clipped_values - returns)
+    return jnp.mean(jnp.maximum(unclipped_loss, clipped_loss))
+
+
 def entropy_bonus(entropies: Array) -> Array:
     """Return mean policy entropy."""
 
     return jnp.mean(entropies)
-

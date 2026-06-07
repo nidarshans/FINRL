@@ -7,11 +7,17 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import optax
 
 from finrl.env.trading_env import EnvConfig, EnvState, StepResult, environment_step
 from finrl.features.splitsafe import FitWindow
 from finrl.ppo.gae import compute_gae
-from finrl.ppo.losses import entropy_bonus, ppo_clip_loss, value_loss
+from finrl.ppo.losses import (
+    clipped_value_loss,
+    entropy_bonus,
+    ppo_clip_loss,
+    value_loss,
+)
 from finrl.ppo.policy import (
     ActorCriticState,
     PPOConfig,
@@ -70,6 +76,7 @@ class PPOTrainingResult:
     actor_loss: Array
     critic_loss: Array
     total_loss: Array
+    diagnostics: dict[str, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +91,37 @@ def initialize_actor_critic(config: PPOConfig, rng: Array) -> ActorCriticState:
     """Initialize actor and critic parameters."""
 
     actor_key, critic_key = jax.random.split(rng)
+    actor_params = PortfolioActor(config).init(actor_key)
+    critic_params = PortfolioCritic(config).init(critic_key)
+    optimizer = _make_optimizer(config)
     return ActorCriticState(
-        actor_params=PortfolioActor(config).init(actor_key),
-        critic_params=PortfolioCritic(config).init(critic_key),
+        actor_params=actor_params,
+        critic_params=critic_params,
         step=jnp.array(0, dtype=jnp.int32),
+        optimizer_state=optimizer.init((actor_params, critic_params)),
+    )
+
+
+class PPOUpdateBatch(NamedTuple):
+    """Frozen tensors used for PPO epochs after rollout collection."""
+
+    states: Array
+    actions: Array
+    old_logprobs: Array
+    advantages: Array
+    returns: Array
+    old_values: Array
+    rewards: Array
+    turnovers: Array
+    drawdowns: Array
+
+
+def _make_optimizer(config: PPOConfig) -> optax.GradientTransformation:
+    """Build the persistent PPO optimizer."""
+
+    return optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(config.learning_rate),
     )
 
 
@@ -170,22 +204,60 @@ def collect_train_trajectory(
     )
 
 
-def _loss_for_params(
-    actor_params: dict[str, Array],
-    critic_params: dict[str, Array],
-    trajectory: PPOTrajectory,
-    config: PPOConfig,
-) -> tuple[Array, tuple[Array, Array]]:
-    critic = PortfolioCritic(config)
-    values = jax.vmap(lambda state: critic.apply(critic_params, state))(trajectory.states)
+def normalize_advantages(advantages: Array, epsilon: float = 1e-8) -> Array:
+    """Normalize advantages once per rollout with a near-zero variance guard."""
+
+    std = jnp.std(advantages)
+    centered = advantages - jnp.mean(advantages)
+    return jnp.where(std > epsilon, centered / (std + epsilon), jnp.zeros_like(advantages))
+
+
+def freeze_ppo_batch(trajectory: PPOTrajectory, config: PPOConfig) -> PPOUpdateBatch:
+    """Compute and freeze rollout tensors used across all PPO epochs."""
+
     advantages, returns = compute_gae(
         trajectory.rewards,
-        values,
+        trajectory.values,
         trajectory.dones,
         config.gamma,
         config.gae_lambda,
     )
-    advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
+    if config.normalize_advantages:
+        advantages = normalize_advantages(advantages)
+    return PPOUpdateBatch(
+        states=jax.lax.stop_gradient(trajectory.states),
+        actions=jax.lax.stop_gradient(trajectory.actions),
+        old_logprobs=jax.lax.stop_gradient(trajectory.old_logprobs),
+        advantages=jax.lax.stop_gradient(advantages),
+        returns=jax.lax.stop_gradient(returns),
+        old_values=jax.lax.stop_gradient(trajectory.values),
+        rewards=jax.lax.stop_gradient(trajectory.rewards),
+        turnovers=jax.lax.stop_gradient(trajectory.step_results.turnover),
+        drawdowns=jax.lax.stop_gradient(trajectory.step_results.state.drawdown),
+    )
+
+
+def _take_batch(batch: PPOUpdateBatch, indices: Array) -> PPOUpdateBatch:
+    return jax.tree_util.tree_map(lambda leaf: leaf[indices], batch)
+
+
+def _explained_variance(values: Array, returns: Array) -> Array:
+    target_var = jnp.var(returns)
+    return jnp.where(
+        target_var > 1e-8,
+        1.0 - jnp.var(returns - values) / (target_var + 1e-8),
+        jnp.array(0.0, dtype=values.dtype),
+    )
+
+
+def _loss_for_params(
+    actor_params: dict[str, Array],
+    critic_params: dict[str, Array],
+    batch: PPOUpdateBatch,
+    config: PPOConfig,
+) -> tuple[Array, dict[str, Array]]:
+    critic = PortfolioCritic(config)
+    values = jax.vmap(lambda state: critic.apply(critic_params, state))(batch.states)
     new_logprobs = jax.vmap(
         lambda state, action: evaluate_action_logprob(
             actor_params,
@@ -195,9 +267,9 @@ def _loss_for_params(
             config.dirichlet_concentration,
             config.min_concentration,
         )
-    )(trajectory.states, trajectory.actions)
+    )(batch.states, batch.actions)
     logits = jax.vmap(lambda state: PortfolioActor(config).apply(actor_params, state))(
-        trajectory.states
+        batch.states
     )
     entropies = jax.vmap(
         lambda logit: portfolio_entropy(
@@ -209,19 +281,103 @@ def _loss_for_params(
     )(logits)
     actor_loss = ppo_clip_loss(
         new_logprobs,
-        jax.lax.stop_gradient(trajectory.old_logprobs),
-        jax.lax.stop_gradient(advantages),
+        batch.old_logprobs,
+        batch.advantages,
         config.clip_epsilon,
     )
-    critic_loss = value_loss(values, jax.lax.stop_gradient(returns))
+    critic_loss = (
+        clipped_value_loss(values, batch.old_values, batch.returns, config.value_clip_eps)
+        if config.use_value_clipping
+        else value_loss(values, batch.returns)
+    )
+    approx_kl = jnp.mean(batch.old_logprobs - new_logprobs)
+    ratio = jnp.exp(new_logprobs - batch.old_logprobs)
+    clip_fraction = jnp.mean(
+        (jnp.abs(ratio - 1.0) > config.clip_epsilon).astype(jnp.float32)
+    )
+    entropy = entropy_bonus(entropies)
     total = actor_loss + config.value_coef * critic_loss - config.entropy_coef * entropy_bonus(
         entropies
     )
-    return total, (actor_loss, critic_loss)
+    diagnostics = {
+        "policy_loss": actor_loss,
+        "value_loss": critic_loss,
+        "entropy": entropy,
+        "total_loss": total,
+        "approx_kl": approx_kl,
+        "clip_fraction": clip_fraction,
+        "explained_variance": _explained_variance(values, batch.returns),
+        "mean_reward": jnp.mean(batch.rewards),
+        "mean_turnover": jnp.mean(batch.turnovers),
+        "max_drawdown": jnp.max(batch.drawdowns),
+    }
+    return total, diagnostics
 
 
-def _sgd_update(params: dict[str, Array], grads: dict[str, Array], learning_rate: float):
-    return jax.tree_util.tree_map(lambda p, g: p - learning_rate * g, params, grads)
+def _empty_diagnostics(dtype: jnp.dtype = jnp.float32) -> dict[str, Array]:
+    return {
+        name: jnp.array(0.0, dtype=dtype)
+        for name in (
+            "policy_loss",
+            "value_loss",
+            "entropy",
+            "total_loss",
+            "approx_kl",
+            "clip_fraction",
+            "explained_variance",
+            "mean_reward",
+            "mean_turnover",
+            "max_drawdown",
+            "epochs_completed",
+            "updates_completed",
+        )
+    }
+
+
+def _merge_diagnostics(diagnostics: list[dict[str, Array]]) -> dict[str, Array]:
+    if not diagnostics:
+        return _empty_diagnostics()
+    names = diagnostics[0].keys()
+    return {
+        name: jnp.mean(jnp.stack([entry[name] for entry in diagnostics]))
+        for name in names
+    }
+
+
+def _train_minibatch(
+    actor_params: dict[str, Array],
+    critic_params: dict[str, Array],
+    optimizer_state: optax.OptState,
+    optimizer: optax.GradientTransformation,
+    batch: PPOUpdateBatch,
+    config: PPOConfig,
+) -> tuple[dict[str, Array], dict[str, Array], optax.OptState, dict[str, Array]]:
+    def loss_fn(
+        current_actor_params: dict[str, Array],
+        current_critic_params: dict[str, Array],
+    ) -> tuple[Array, dict[str, Array]]:
+        return _loss_for_params(
+            current_actor_params,
+            current_critic_params,
+            batch,
+            config,
+        )
+
+    (total_loss, diagnostics), grads = jax.value_and_grad(
+        loss_fn,
+        argnums=(0, 1),
+        has_aux=True,
+    )(actor_params, critic_params)
+    diagnostics = {**diagnostics, "total_loss": total_loss}
+    updates, optimizer_state = optimizer.update(
+        grads,
+        optimizer_state,
+        (actor_params, critic_params),
+    )
+    actor_updates, critic_updates = updates
+    actor_params = optax.apply_updates(actor_params, actor_updates)
+    critic_params = optax.apply_updates(critic_params, critic_updates)
+    return actor_params, critic_params, optimizer_state, diagnostics
 
 
 def train_ppo_on_split(
@@ -244,34 +400,52 @@ def train_ppo_on_split(
 
     actor_params = policy_state.actor_params
     critic_params = policy_state.critic_params
-    actor_loss = jnp.array(0.0, dtype=jnp.float32)
-    critic_loss = jnp.array(0.0, dtype=jnp.float32)
-    total_loss = jnp.array(0.0, dtype=jnp.float32)
-    for _ in range(config.train_epochs):
-        def loss_fn(
-            current_actor_params: dict[str, Array],
-            current_critic_params: dict[str, Array],
-        ) -> tuple[Array, tuple[Array, Array]]:
-            return _loss_for_params(
-                current_actor_params,
-                current_critic_params,
-                trajectory,
+    optimizer = _make_optimizer(config)
+    optimizer_state = policy_state.optimizer_state
+    if optimizer_state is None:
+        optimizer_state = optimizer.init((actor_params, critic_params))
+    frozen_batch = freeze_ppo_batch(trajectory, config)
+    n_steps = int(frozen_batch.rewards.shape[0])
+    diagnostics_history: list[dict[str, Array]] = []
+    updates_completed = 0
+    epochs_completed = 0
+    key, shuffle_key = jax.random.split(key)
+    for epoch in range(config.update_epochs):
+        epoch_key = jax.random.fold_in(shuffle_key, epoch)
+        indices = jax.random.permutation(epoch_key, n_steps)
+        stop_epoch = False
+        for start in range(0, n_steps, config.minibatch_size):
+            minibatch_indices = indices[start : start + config.minibatch_size]
+            minibatch = _take_batch(frozen_batch, minibatch_indices)
+            actor_params, critic_params, optimizer_state, diagnostics = _train_minibatch(
+                actor_params,
+                critic_params,
+                optimizer_state,
+                optimizer,
+                minibatch,
                 config,
             )
+            diagnostics_history.append(diagnostics)
+            updates_completed += 1
+            if float(diagnostics["approx_kl"]) > config.target_kl:
+                stop_epoch = True
+                break
+        epochs_completed += 1
+        if stop_epoch:
+            break
 
-        (total_loss, (actor_loss, critic_loss)), grads = jax.value_and_grad(
-            loss_fn,
-            argnums=(0, 1),
-            has_aux=True,
-        )(actor_params, critic_params)
-        actor_grads, critic_grads = grads
-        actor_params = _sgd_update(actor_params, actor_grads, config.learning_rate)
-        critic_params = _sgd_update(critic_params, critic_grads, config.learning_rate)
+    diagnostics = _merge_diagnostics(diagnostics_history)
+    diagnostics = {
+        **diagnostics,
+        "epochs_completed": jnp.array(epochs_completed, dtype=jnp.float32),
+        "updates_completed": jnp.array(updates_completed, dtype=jnp.float32),
+    }
 
     updated_state = ActorCriticState(
         actor_params=actor_params,
         critic_params=critic_params,
-        step=policy_state.step + jnp.array(config.train_epochs, dtype=jnp.int32),
+        step=policy_state.step + jnp.array(updates_completed, dtype=jnp.int32),
+        optimizer_state=optimizer_state,
     )
     checkpoint = PolicyCheckpoint(
         state=updated_state,
@@ -281,9 +455,10 @@ def train_ppo_on_split(
     return PPOTrainingResult(
         checkpoint=checkpoint,
         trajectory=trajectory,
-        actor_loss=actor_loss,
-        critic_loss=critic_loss,
-        total_loss=total_loss,
+        actor_loss=diagnostics["policy_loss"],
+        critic_loss=diagnostics["value_loss"],
+        total_loss=diagnostics["total_loss"],
+        diagnostics=diagnostics,
     )
 
 
