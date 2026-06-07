@@ -9,6 +9,8 @@ from finrl.backtest.walk_forward import WalkForwardConfig
 from finrl.env.trading_env import EnvConfig
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.models.encoder import EncoderConfig
+from finrl.models.flax_encoder import ProductionEncoderConfig
+from finrl.ppo.flax_policy import ProductionPPOConfig
 from finrl.ppo.policy import PPOConfig
 from finrl.regimes.schema import HMMConfig
 
@@ -20,10 +22,13 @@ class ExperimentConfig:
     walk_forward: WalkForwardConfig = WalkForwardConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
     encoder: EncoderConfig = EncoderConfig()
+    production_encoder: ProductionEncoderConfig = ProductionEncoderConfig()
     hmm: HMMConfig = HMMConfig()
     ppo: PPOConfig = PPOConfig()
+    production_ppo: ProductionPPOConfig = ProductionPPOConfig()
     env: EnvConfig = EnvConfig()
     enable_ppo: bool = True
+    use_production_pipeline: bool = False
     seed: int = 0
     periods_per_year: int = 52
     output_dir: Path | None = None
@@ -31,4 +36,3 @@ class ExperimentConfig:
     def __post_init__(self) -> None:
         if self.periods_per_year <= 0:
             raise ValueError("periods_per_year must be positive.")
-

@@ -11,6 +11,8 @@ from finrl.backtest.walk_forward import WalkForwardSplit
 from finrl.features.preprocessing import FittedPreprocessor
 from finrl.features.schema import FeatureBundle
 from finrl.models.windows import LookbackWindows
+from finrl.models.encoder_training import EncoderTrainingResult
+from finrl.ppo.flax_trainer import ProductionPPOTrainState, ProductionPPOTrainingResult
 from finrl.ppo.trainer import PolicyCheckpoint, PPOTrainingResult
 from finrl.regimes.schema import FittedHMM
 
@@ -40,3 +42,6 @@ class ExperimentArtifacts:
     fitted_hmm: FittedHMM
     ppo_training: PPOTrainingResult | None
     policy_checkpoint: PolicyCheckpoint | None
+    production_encoder_training: EncoderTrainingResult | None = None
+    production_ppo_training: ProductionPPOTrainingResult | None = None
+    production_policy_state: ProductionPPOTrainState | None = None
