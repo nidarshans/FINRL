@@ -10,7 +10,21 @@ from finrl.models.encoder import (
     MarketEncoder,
     encode_market_state,
 )
+from finrl.models.encoder_losses import (
+    EncoderLossWeights,
+    EncoderPredictionHeads,
+    encoder_loss,
+)
 from finrl.models.encoder_state import init_encoder_train_state
+from finrl.models.encoder_training import (
+    EncoderBatch,
+    EncoderTrainingConfig,
+    EncoderTrainingResult,
+    fit_encoder_on_train_split,
+    init_encoder_pretraining_state,
+    make_encoder_batches,
+    train_encoder_epoch,
+)
 from finrl.models.flax_encoder import (
     AssetLSTMEncoder,
     AttentionPool,
@@ -31,6 +45,11 @@ __all__ = [
     "CrossAssetAttention",
     "CrossAssetSelfAttention",
     "EncoderConfig",
+    "EncoderBatch",
+    "EncoderLossWeights",
+    "EncoderPredictionHeads",
+    "EncoderTrainingConfig",
+    "EncoderTrainingResult",
     "FeatureWindow",
     "FusionMLP",
     "LookbackWindows",
@@ -42,6 +61,11 @@ __all__ = [
     "build_lookback_windows",
     "encode_market_state",
     "encode_market_state_flax",
+    "encoder_loss",
+    "fit_encoder_on_train_split",
+    "init_encoder_pretraining_state",
     "init_encoder_train_state",
     "init_encoder_variables",
+    "make_encoder_batches",
+    "train_encoder_epoch",
 ]

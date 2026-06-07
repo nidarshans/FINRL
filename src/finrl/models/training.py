@@ -1,15 +1,11 @@
-"""Training hooks for the market encoder.
-
-The encoder objective is intentionally unspecified in the architecture, so this
-module does not invent a supervised or self-supervised loss.
-"""
+"""Compatibility training hook for the production market encoder."""
 
 from __future__ import annotations
 
+from finrl.models.encoder_training import fit_encoder_on_train_split
 
-def train_encoder(*args: object, **kwargs: object) -> None:
-    """Placeholder for future Colab-only encoder training."""
 
-    del args, kwargs
-    raise NotImplementedError("Encoder training objective is not specified yet.")
+def train_encoder(*args: object, **kwargs: object) -> object:
+    """Train the encoder with the Phase C self-supervised objective."""
 
+    return fit_encoder_on_train_split(*args, **kwargs)
