@@ -21,10 +21,36 @@ from finrl.ppo.flax_policy import (
     build_ppo_state as build_flax_ppo_state,
     sample_action as sample_flax_action,
 )
+from finrl.ppo.flax_trainer import (
+    PPOUpdateBatchFlax,
+    ProductionPPOEvaluationResult,
+    ProductionPPOTrainState,
+    ProductionPPOTrainingResult,
+    evaluate_frozen_policy as evaluate_frozen_flax_policy,
+    freeze_rollout_batch,
+    initialize_ppo_train_state,
+    train_epoch,
+    train_ppo_on_split as train_flax_ppo_on_split,
+    update_minibatch,
+)
 from finrl.ppo.flax_value import PortfolioCriticFlax
 from finrl.ppo.checkpoints import load_policy_checkpoint, save_policy_checkpoint
 from finrl.ppo.gae import compute_gae
-from finrl.ppo.losses import clipped_value_loss, entropy_bonus, ppo_clip_loss, value_loss
+from finrl.ppo.losses import (
+    clipped_value_loss,
+    critic_loss,
+    entropy_bonus,
+    ppo_actor_loss,
+    ppo_clip_loss,
+    ppo_total_loss,
+    value_loss,
+)
+from finrl.ppo.metrics import (
+    PPOTrainMetrics,
+    approximate_kl,
+    clip_fraction,
+    explained_variance,
+)
 from finrl.ppo.opt_state import create_train_state
 from finrl.ppo.policy import (
     ActorCriticState,
@@ -73,7 +99,12 @@ __all__ = [
     "PortfolioCriticFlax",
     "ProductionPortfolioAction",
     "ProductionPPOConfig",
+    "ProductionPPOEvaluationResult",
+    "ProductionPPOTrainState",
+    "ProductionPPOTrainingResult",
+    "PPOTrainMetrics",
     "PPOUpdateBatch",
+    "PPOUpdateBatchFlax",
     "RolloutBatch",
     "RolloutBuffer",
     "actor_mean_weights",
@@ -85,19 +116,28 @@ __all__ = [
     "collect_rollout",
     "compute_gae",
     "create_train_state",
+    "critic_loss",
     "dirichlet_concentration",
     "entropy_bonus",
     "evaluate_action_logprob",
+    "evaluate_frozen_flax_policy",
     "evaluate_frozen_policy",
+    "explained_variance",
     "freeze_ppo_batch",
+    "freeze_rollout_batch",
     "initialize_actor_critic",
+    "initialize_ppo_train_state",
     "load_policy_checkpoint",
     "make_minibatches",
     "normalize_advantages",
     "portfolio_entropy",
     "portfolio_logprob",
     "ppo_clip_loss",
+    "ppo_actor_loss",
+    "ppo_total_loss",
     "policy_entropy",
+    "approximate_kl",
+    "clip_fraction",
     "rollout_length",
     "sample_action",
     "sample_flax_action",
@@ -105,7 +145,10 @@ __all__ = [
     "save_policy_checkpoint",
     "shuffle_rollout_indices",
     "temperature_softmax",
+    "train_epoch",
+    "train_flax_ppo_on_split",
     "train_ppo_on_split",
+    "update_minibatch",
     "validate_rollout_batch",
     "value_loss",
 ]

@@ -27,6 +27,19 @@ class ProductionPPOConfig:
     temperature: float = 1.0
     dirichlet_concentration: float = 50.0
     min_concentration: float = 1e-3
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_epsilon: float = 0.2
+    value_clip_epsilon: float = 0.2
+    value_coef: float = 0.5
+    entropy_coef: float = 0.0
+    learning_rate: float = 1e-3
+    update_epochs: int = 4
+    minibatch_size: int = 64
+    target_kl: float = 0.01
+    max_grad_norm: float = 0.5
+    normalize_advantages: bool = True
+    use_value_clipping: bool = True
 
     @property
     def action_dim(self) -> int:
@@ -55,6 +68,18 @@ class ProductionPPOConfig:
             raise ValueError("dirichlet_concentration must be positive.")
         if self.min_concentration <= 0.0:
             raise ValueError("min_concentration must be positive.")
+        if not 0.0 <= self.gamma <= 1.0:
+            raise ValueError("gamma must be in [0, 1].")
+        if not 0.0 <= self.gae_lambda <= 1.0:
+            raise ValueError("gae_lambda must be in [0, 1].")
+        if self.clip_epsilon <= 0.0 or self.value_clip_epsilon <= 0.0:
+            raise ValueError("clip epsilons must be positive.")
+        if self.learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive.")
+        if self.update_epochs <= 0 or self.minibatch_size <= 0:
+            raise ValueError("update_epochs and minibatch_size must be positive.")
+        if self.target_kl <= 0.0 or self.max_grad_norm <= 0.0:
+            raise ValueError("target_kl and max_grad_norm must be positive.")
 
 
 class ProductionPortfolioAction(NamedTuple):

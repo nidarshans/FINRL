@@ -49,3 +49,40 @@ def entropy_bonus(entropies: Array) -> Array:
     """Return mean policy entropy."""
 
     return jnp.mean(entropies)
+
+
+def ppo_actor_loss(
+    new_log_probs: Array,
+    old_log_probs: Array,
+    advantages: Array,
+    clip_epsilon: float,
+) -> Array:
+    """Return production PPO clipped actor loss."""
+
+    return ppo_clip_loss(new_log_probs, old_log_probs, advantages, clip_epsilon)
+
+
+def critic_loss(
+    values: Array,
+    returns: Array,
+    old_values: Array | None = None,
+    clip_epsilon: float = 0.2,
+    use_clipping: bool = True,
+) -> Array:
+    """Return production critic loss with optional PPO value clipping."""
+
+    if old_values is not None and use_clipping:
+        return clipped_value_loss(values, old_values, returns, clip_epsilon)
+    return value_loss(values, returns)
+
+
+def ppo_total_loss(
+    actor_loss: Array,
+    critic_loss_value: Array,
+    entropy: Array,
+    value_coef: float,
+    entropy_coef: float,
+) -> Array:
+    """Combine actor, critic, and entropy terms into PPO total loss."""
+
+    return actor_loss + value_coef * critic_loss_value - entropy_coef * entropy

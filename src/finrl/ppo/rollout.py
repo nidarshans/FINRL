@@ -85,6 +85,7 @@ def collect_rollout(
     ppo_config: ProductionPPOConfig,
     rng: Array,
     rollout_length: int | None = None,
+    deterministic: bool = False,
 ) -> RolloutBuffer:
     """Collect one production rollout using the existing environment step."""
 
@@ -123,6 +124,7 @@ def collect_rollout(
             state_t,
             action_key,
             ppo_config,
+            deterministic=deterministic,
         )
         value_t = critic.apply(critic_variables, state_t)
         result = environment_step(env_state, action.weights, returns_t, spy_t, env_config)
