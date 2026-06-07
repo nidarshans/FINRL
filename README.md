@@ -108,6 +108,72 @@ Features:
 * Annual retraining
 * Strict out-of-sample evaluation
 
+## TensorBoard Logging
+
+PPO training can write TensorBoard event files under `runs/`:
+
+```python
+from dataclasses import replace
+
+from finrl.experiments import ExperimentConfig
+from finrl.ppo import PPOConfig
+
+config = ExperimentConfig(
+    ppo=replace(
+        PPOConfig(),
+        enable_tensorboard=True,
+        log_dir="runs",
+        log_frequency=1,
+    )
+)
+```
+
+Launch TensorBoard from the repository root:
+
+```bash
+tensorboard --logdir runs
+```
+
+Example dashboard structure:
+
+```text
+runs/
+└── split_0/
+    ├── ppo/
+    │   ├── policy_loss
+    │   ├── value_loss
+    │   ├── total_loss
+    │   ├── entropy
+    │   ├── approx_kl
+    │   ├── clip_fraction
+    │   ├── grad_norm
+    │   └── explained_variance
+    ├── portfolio/
+    │   ├── reward
+    │   ├── alpha_vs_spy
+    │   ├── turnover
+    │   ├── transaction_cost
+    │   ├── max_drawdown
+    │   ├── cash_weight
+    │   ├── max_position_weight
+    │   └── effective_positions
+    ├── regime/
+    │   ├── state_0_probability
+    │   ├── state_1_probability
+    │   └── state_0_asset_0_allocation
+    └── evaluation/
+        ├── train_return
+        ├── test_return
+        ├── train_alpha
+        ├── test_alpha
+        ├── train_max_drawdown
+        └── test_max_drawdown
+```
+
+The TensorBoard Scalars view should show PPO update metrics at every configured
+`log_frequency`. Regime allocation tags expand by HMM state and asset index, so a
+100-stock-plus-cash run will include one allocation scalar per state per asset.
+
 ## Repository Structure
 
 src/

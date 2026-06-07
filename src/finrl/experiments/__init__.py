@@ -5,6 +5,7 @@ from finrl.experiments.config import ExperimentConfig
 from finrl.experiments.reporting import (
     build_allocation_figure,
     build_performance_figure,
+    build_regime_portfolio_figure,
     build_spectral_figure,
     metrics_to_frame,
     write_report,
@@ -27,6 +28,7 @@ __all__ = [
     "aggregate_walk_forward_results",
     "build_allocation_figure",
     "build_performance_figure",
+    "build_regime_portfolio_figure",
     "build_spectral_figure",
     "evaluate_test_split",
     "fit_train_artifacts",

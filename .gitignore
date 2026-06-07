@@ -50,6 +50,10 @@ coverage.xml
 .hypotheses/
 .pytest_cache/
 pytestdebug.log
+
+# TensorBoard event files
+/runs/
+
 # Translations
 *.mo
 *.pot

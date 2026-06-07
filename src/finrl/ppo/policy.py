@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 
 import jax
@@ -45,6 +46,9 @@ class PPOConfig:
     normalize_advantages: bool = True
     use_value_clipping: bool = True
     train_epochs: int | None = None
+    enable_tensorboard: bool = False
+    log_dir: str | Path = "runs"
+    log_frequency: int = 1
     # Logits define a softmax mean; this scale controls Dirichlet exploration.
     dirichlet_concentration: float = 100.0
     min_concentration: float = 1e-3
@@ -89,6 +93,8 @@ class PPOConfig:
             raise ValueError("ppo_epochs must be positive.")
         if self.train_epochs is not None and self.train_epochs <= 0:
             raise ValueError("train_epochs must be positive when provided.")
+        if self.log_frequency <= 0:
+            raise ValueError("log_frequency must be positive.")
         if self.minibatch_size <= 0:
             raise ValueError("minibatch_size must be positive.")
         if self.target_kl <= 0.0:

@@ -108,6 +108,106 @@ def build_allocation_figure(
     )
 
 
+def build_regime_portfolio_figure(result: WalkForwardResult):
+    """Return a two-panel Plotly figure for portfolio equity and HMM regimes."""
+
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    id_columns = {"decision_date", "split_index"}
+    regime_columns = [
+        column
+        for column in result.regime_probabilities.columns
+        if column not in id_columns
+    ]
+    if not regime_columns:
+        raise ValueError("No regime probability columns are available.")
+
+    probabilities = result.regime_probabilities.select(regime_columns)
+    dates = result.regime_probabilities["decision_date"]
+    palette = (
+        "#2ecc71",
+        "#e74c3c",
+        "#3498db",
+        "#f39c12",
+        "#9b59b6",
+        "#16a085",
+    )
+    portfolio = result.portfolio_curve.join(
+        result.regime_probabilities.select(["decision_date", *regime_columns]),
+        on="decision_date",
+        how="inner",
+    )
+    portfolio_dates = portfolio["decision_date"]
+    portfolio_equity = portfolio["equity"]
+    portfolio_dominant = portfolio.select(regime_columns).to_numpy().argmax(axis=1)
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+        subplot_titles=(
+            "Portfolio Equity with Overlaid Regimes",
+            "Regime Probabilities Over Time",
+        ),
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=portfolio_dates,
+            y=portfolio_equity,
+            mode="lines",
+            name="Portfolio",
+            line={"color": "#7f8c8d", "width": 1.5},
+        ),
+        row=1,
+        col=1,
+    )
+    for regime_index, column in enumerate(regime_columns):
+        mask = portfolio_dominant == regime_index
+        fig.add_trace(
+            go.Scatter(
+                x=portfolio_dates.filter(mask),
+                y=portfolio_equity.filter(mask),
+                mode="markers",
+                name=f"Regime {regime_index}",
+                marker={
+                    "color": palette[regime_index % len(palette)],
+                    "size": 6,
+                },
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
+    for regime_index, column in enumerate(regime_columns):
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=result.regime_probabilities[column],
+                mode="lines",
+                name=f"Regime {regime_index} Prob",
+                line={
+                    "color": palette[regime_index % len(palette)],
+                    "width": 2,
+                },
+            ),
+            row=2,
+            col=1,
+        )
+    fig.update_layout(
+        title="HMM Market Regime Analysis — Portfolio",
+        template="plotly_white",
+        legend_title_text="Series",
+        hovermode="x unified",
+        height=720,
+    )
+    fig.update_xaxes(title_text="Decision Date", row=2, col=1)
+    fig.update_yaxes(title_text="Portfolio Equity", row=1, col=1)
+    fig.update_yaxes(title_text="Probability", range=[0.0, 1.05], row=2, col=1)
+    return fig
+
+
 def metrics_to_frame(result: WalkForwardResult) -> pl.DataFrame:
     """Convert split metrics to a Polars table."""
 
@@ -140,7 +240,9 @@ def write_report(result: WalkForwardResult, output_dir: str | Path) -> None:
     result.portfolio_curve.write_csv(path / "portfolio_curve.csv")
     result.spy_curve.write_csv(path / "spy_curve.csv")
     result.allocations.write_csv(path / "allocations.csv")
+    result.regime_probabilities.write_csv(path / "regime_probabilities.csv")
     result.spectral_features.write_csv(path / "spectral_features.csv")
     build_performance_figure(result).write_html(path / "performance_vs_spy.html")
     build_allocation_figure(result).write_html(path / "allocations.html")
+    build_regime_portfolio_figure(result).write_html(path / "regime_portfolio.html")
     build_spectral_figure(result).write_html(path / "spectral_features.html")

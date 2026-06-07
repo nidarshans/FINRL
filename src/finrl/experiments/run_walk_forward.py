@@ -28,6 +28,7 @@ from finrl.experiments.config import ExperimentConfig
 from finrl.features.preprocessing import fit_transform_train_transform_test
 from finrl.features.schema import FeatureBundle
 from finrl.features.splitsafe import FitWindow
+from finrl.logging.tensorboard import TensorBoardLogger
 from finrl.models.encoder import FeatureWindow, MarketEncoder, encode_market_state
 from finrl.models.windows import LookbackWindows, build_lookback_windows
 from finrl.ppo.trainer import (
@@ -198,6 +199,7 @@ def fit_train_artifacts(
     spy_returns: pl.DataFrame,
     config: ExperimentConfig,
     split_index: int = 0,
+    logger: TensorBoardLogger | None = None,
 ) -> ExperimentArtifacts:
     """Fit preprocessing, encoder states, HMM, and optional PPO on train only."""
 
@@ -250,6 +252,7 @@ def fit_train_artifacts(
                 n_regimes=train_regime_probs.shape[1],
             ),
             jax.random.PRNGKey(config.seed + split_index),
+            logger,
         )
         policy_checkpoint = ppo_training.checkpoint
     return ExperimentArtifacts(
@@ -261,6 +264,7 @@ def fit_train_artifacts(
         test_phi=test_phi,
         train_regime_probs=train_regime_probs,
         test_regime_probs=test_regime_probs,
+        train_spy_returns=train_spy if config.enable_ppo else None,
         fitted_hmm=fitted_hmm,
         ppo_training=ppo_training,
         policy_checkpoint=policy_checkpoint,
@@ -359,6 +363,16 @@ def evaluate_test_split(
         }
     )
     allocation_frame = _allocation_frame(test_dates, actions, return_columns, split_index)
+    regime_frame = pl.DataFrame(
+        {
+            "decision_date": list(test_dates),
+            "split_index": [split_index] * len(test_dates),
+            **{
+                f"regime_{index}": frozen_artifacts.test_regime_probs[:, index]
+                for index in range(frozen_artifacts.test_regime_probs.shape[1])
+            },
+        }
+    )
     spectral_frame = pl.DataFrame(
         {
             "decision_date": list(test_dates),
@@ -378,9 +392,48 @@ def evaluate_test_split(
         portfolio_returns=portfolio_frame,
         spy_returns=benchmark,
         allocations=allocation_frame,
+        regime_probabilities=regime_frame,
         spectral_features=spectral_frame,
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
+    )
+
+
+def _log_evaluation_metrics(
+    artifacts: ExperimentArtifacts,
+    result: SplitResult,
+    config: ExperimentConfig,
+    logger: TensorBoardLogger,
+    step: int,
+) -> None:
+    if artifacts.ppo_training is None:
+        return
+    if artifacts.train_spy_returns is None:
+        raise ValueError("Train SPY returns are required for PPO evaluation logging.")
+    train_returns = np.asarray(artifacts.ppo_training.trajectory.step_results.net_return)
+    train_spy = np.asarray(artifacts.train_spy_returns)
+    train_turnovers = np.asarray(artifacts.ppo_training.trajectory.step_results.turnover)
+    train_costs = np.asarray(
+        artifacts.ppo_training.trajectory.step_results.transaction_cost
+    )
+    train_metrics = calculate_performance_metrics(
+        train_returns,
+        train_spy,
+        train_turnovers,
+        train_costs,
+        config.periods_per_year,
+    )
+    logger.log_scalars(
+        {
+            "train_return": train_metrics.cumulative_return,
+            "test_return": result.metrics.cumulative_return,
+            "train_alpha": train_metrics.spy_relative_alpha,
+            "test_alpha": result.metrics.spy_relative_alpha,
+            "train_max_drawdown": train_metrics.max_drawdown,
+            "test_max_drawdown": result.metrics.max_drawdown,
+        },
+        step,
+        "evaluation",
     )
 
 
@@ -392,22 +445,38 @@ def run_split(
 ) -> SplitRunResult:
     """Fit train artifacts and evaluate one frozen test split."""
 
-    frozen_artifacts = fit_train_artifacts(
-        split,
-        raw_data.features,
-        raw_data.returns,
-        raw_data.spy_returns,
-        config,
-        split_index,
+    logger = (
+        TensorBoardLogger(
+            log_dir=config.ppo.log_dir,
+            experiment_name=f"split_{split_index}",
+            enabled=config.ppo.enable_tensorboard,
+        )
+        if config.enable_ppo
+        else None
     )
-    result = evaluate_test_split(
-        split,
-        frozen_artifacts,
-        raw_data.returns,
-        raw_data.spy_returns,
-        config,
-        split_index,
-    )
+    try:
+        frozen_artifacts = fit_train_artifacts(
+            split,
+            raw_data.features,
+            raw_data.returns,
+            raw_data.spy_returns,
+            config,
+            split_index,
+            logger,
+        )
+        result = evaluate_test_split(
+            split,
+            frozen_artifacts,
+            raw_data.returns,
+            raw_data.spy_returns,
+            config,
+            split_index,
+        )
+        if logger is not None:
+            _log_evaluation_metrics(frozen_artifacts, result, config, logger, split_index)
+    finally:
+        if logger is not None:
+            logger.close()
     return SplitRunResult(artifacts=frozen_artifacts, result=result)
 
 
@@ -419,6 +488,10 @@ def aggregate_walk_forward_results(results: tuple[SplitResult, ...], config: Exp
     portfolio_returns = pl.concat([result.portfolio_returns for result in results], how="vertical")
     spy_returns = pl.concat([result.spy_returns for result in results], how="vertical")
     allocations = pl.concat([result.allocations for result in results], how="vertical")
+    regime_probabilities = pl.concat(
+        [result.regime_probabilities for result in results],
+        how="vertical",
+    )
     spectral = pl.concat([result.spectral_features for result in results], how="vertical")
     portfolio_curve_values = equity_curve(portfolio_returns["portfolio_return"].to_numpy())
     spy_curve_values = equity_curve(spy_returns["spy_return"].to_numpy())
@@ -447,6 +520,7 @@ def aggregate_walk_forward_results(results: tuple[SplitResult, ...], config: Exp
         portfolio_curve=portfolio_curve,
         spy_curve=spy_curve,
         allocations=allocations,
+        regime_probabilities=regime_probabilities,
         spectral_features=spectral,
         aggregate_metrics=aggregate_metrics,
         aggregate_benchmark_metrics=aggregate_benchmark_metrics,

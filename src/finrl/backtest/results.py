@@ -34,6 +34,7 @@ class SplitResult:
     portfolio_returns: pl.DataFrame
     spy_returns: pl.DataFrame
     allocations: pl.DataFrame
+    regime_probabilities: pl.DataFrame
     spectral_features: pl.DataFrame
     metrics: PerformanceMetrics
     benchmark_metrics: PerformanceMetrics
@@ -47,6 +48,7 @@ class WalkForwardResult:
     portfolio_curve: pl.DataFrame
     spy_curve: pl.DataFrame
     allocations: pl.DataFrame
+    regime_probabilities: pl.DataFrame
     spectral_features: pl.DataFrame
     aggregate_metrics: PerformanceMetrics
     aggregate_benchmark_metrics: PerformanceMetrics

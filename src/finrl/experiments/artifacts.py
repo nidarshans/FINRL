@@ -36,6 +36,7 @@ class ExperimentArtifacts:
     test_phi: np.ndarray
     train_regime_probs: np.ndarray
     test_regime_probs: np.ndarray
+    train_spy_returns: np.ndarray | None
     fitted_hmm: FittedHMM
     ppo_training: PPOTrainingResult | None
     policy_checkpoint: PolicyCheckpoint | None

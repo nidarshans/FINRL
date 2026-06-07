@@ -11,6 +11,7 @@ import optax
 
 from finrl.env.trading_env import EnvConfig, EnvState, StepResult, environment_step
 from finrl.features.splitsafe import FitWindow
+from finrl.logging.tensorboard import TensorBoardLogger
 from finrl.ppo.gae import compute_gae
 from finrl.ppo.losses import (
     clipped_value_loss,
@@ -250,6 +251,30 @@ def _explained_variance(values: Array, returns: Array) -> Array:
     )
 
 
+def _portfolio_diagnostics(
+    trajectory: PPOTrajectory,
+    spy_returns: Array,
+    config: PPOConfig,
+) -> dict[str, Array]:
+    actions = trajectory.actions
+    returns = trajectory.step_results.net_return
+    cash_index = config.n_assets - 1 if config.n_assets > 0 else -1
+    if cash_index < 0:
+        cash_weight = jnp.array(0.0, dtype=actions.dtype)
+    else:
+        cash_weight = jnp.mean(actions[:, cash_index])
+    return {
+        "reward": jnp.mean(trajectory.rewards),
+        "alpha_vs_spy": jnp.mean(returns - spy_returns),
+        "turnover": jnp.mean(trajectory.step_results.turnover),
+        "transaction_cost": jnp.mean(trajectory.step_results.transaction_cost),
+        "max_drawdown": jnp.max(trajectory.step_results.state.drawdown),
+        "cash_weight": cash_weight,
+        "max_position_weight": jnp.mean(jnp.max(actions, axis=1)),
+        "effective_positions": jnp.mean(1.0 / jnp.sum(jnp.square(actions), axis=1)),
+    }
+
+
 def _loss_for_params(
     actor_params: dict[str, Array],
     critic_params: dict[str, Array],
@@ -325,6 +350,7 @@ def _empty_diagnostics(dtype: jnp.dtype = jnp.float32) -> dict[str, Array]:
             "approx_kl",
             "clip_fraction",
             "explained_variance",
+            "grad_norm",
             "mean_reward",
             "mean_turnover",
             "max_drawdown",
@@ -368,7 +394,11 @@ def _train_minibatch(
         argnums=(0, 1),
         has_aux=True,
     )(actor_params, critic_params)
-    diagnostics = {**diagnostics, "total_loss": total_loss}
+    diagnostics = {
+        **diagnostics,
+        "total_loss": total_loss,
+        "grad_norm": optax.global_norm(grads),
+    }
     updates, optimizer_state = optimizer.update(
         grads,
         optimizer_state,
@@ -384,6 +414,8 @@ def train_ppo_on_split(
     train_artifacts: PPOArtifacts,
     config: PPOConfig,
     rng: Array | None = None,
+    logger: TensorBoardLogger | None = None,
+    experiment_name: str | None = None,
 ) -> PPOTrainingResult:
     """Train PPO on a single train split and return a frozen checkpoint."""
 
@@ -405,6 +437,23 @@ def train_ppo_on_split(
     if optimizer_state is None:
         optimizer_state = optimizer.init((actor_params, critic_params))
     frozen_batch = freeze_ppo_batch(trajectory, config)
+    owned_logger = (
+        TensorBoardLogger(
+            log_dir=config.log_dir,
+            experiment_name=experiment_name,
+            enabled=config.enable_tensorboard,
+        )
+        if logger is None
+        else None
+    )
+    active_logger = logger if logger is not None else owned_logger
+    if active_logger is not None:
+        active_logger.log_hyperparameters(config)
+    portfolio_metrics = _portfolio_diagnostics(
+        trajectory,
+        train_artifacts.spy_returns,
+        config,
+    )
     n_steps = int(frozen_batch.rewards.shape[0])
     diagnostics_history: list[dict[str, Array]] = []
     updates_completed = 0
@@ -427,6 +476,15 @@ def train_ppo_on_split(
             )
             diagnostics_history.append(diagnostics)
             updates_completed += 1
+            if active_logger is not None and updates_completed % config.log_frequency == 0:
+                active_logger.log_scalars(diagnostics, updates_completed, "ppo")
+                active_logger.log_scalars(portfolio_metrics, updates_completed, "portfolio")
+                active_logger.log_regime_metrics(
+                    train_artifacts.regime_probs,
+                    trajectory.actions,
+                    updates_completed,
+                    "regime",
+                )
             if float(diagnostics["approx_kl"]) > config.target_kl:
                 stop_epoch = True
                 break
@@ -452,6 +510,8 @@ def train_ppo_on_split(
         train_window=train_artifacts.fit_window,
         config=config,
     )
+    if owned_logger is not None:
+        owned_logger.close()
     return PPOTrainingResult(
         checkpoint=checkpoint,
         trajectory=trajectory,

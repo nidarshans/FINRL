@@ -12,6 +12,7 @@ from finrl.experiments import (
     RawExperimentData,
     build_allocation_figure,
     build_performance_figure,
+    build_regime_portfolio_figure,
     build_spectral_figure,
     metrics_to_frame,
     run_walk_forward_experiment,
@@ -124,6 +125,7 @@ def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
     assert "equity" in result.portfolio_curve.columns
     assert "equity" in result.spy_curve.columns
     assert {"AAA", "BBB", "CASH"}.issubset(result.allocations.columns)
+    assert {"regime_0", "regime_1"}.issubset(result.regime_probabilities.columns)
     assert "spectral_0" in result.spectral_features.columns
     allocation_sums = result.allocations.select((pl.col("AAA") + pl.col("BBB") + pl.col("CASH")).alias("total"))
     assert allocation_sums.get_column("total").to_list() == [1.0] * result.allocations.height
@@ -137,11 +139,13 @@ def test_reporting_helpers_create_plotly_figures_and_metrics_frame() -> None:
 
     performance_fig = build_performance_figure(result)
     allocation_fig = build_allocation_figure(result, top_n=2)
+    regime_fig = build_regime_portfolio_figure(result)
     spectral_fig = build_spectral_figure(result, value_columns=("spectral_0", "spectral_1"))
     metrics = metrics_to_frame(result)
 
     assert len(performance_fig.data) == 2
     assert len(allocation_fig.data) == 2
+    assert len(regime_fig.data) == 5
     assert len(spectral_fig.data) == 2
     assert metrics.height == 2
     assert "spy_cumulative_return" in metrics.columns
