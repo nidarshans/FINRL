@@ -7,6 +7,12 @@ from finrl.ppo.distributions import (
     sample_dirichlet_portfolio,
     temperature_softmax,
 )
+from finrl.ppo.batches import (
+    make_minibatches,
+    rollout_length,
+    shuffle_rollout_indices,
+    validate_rollout_batch,
+)
 from finrl.ppo.flax_policy import (
     PortfolioActorFlax,
     ProductionPortfolioAction,
@@ -35,6 +41,7 @@ from finrl.ppo.simplex_distribution import (
     action_log_prob,
     policy_entropy,
 )
+from finrl.ppo.rollout import RolloutBatch, RolloutBuffer, collect_rollout
 from finrl.ppo.trainer import (
     PPOArtifacts,
     PPOEvaluationResult,
@@ -67,12 +74,15 @@ __all__ = [
     "ProductionPortfolioAction",
     "ProductionPPOConfig",
     "PPOUpdateBatch",
+    "RolloutBatch",
+    "RolloutBuffer",
     "actor_mean_weights",
     "action_log_prob",
     "build_ppo_state",
     "build_flax_ppo_state",
     "clipped_value_loss",
     "collect_train_trajectory",
+    "collect_rollout",
     "compute_gae",
     "create_train_state",
     "dirichlet_concentration",
@@ -82,16 +92,20 @@ __all__ = [
     "freeze_ppo_batch",
     "initialize_actor_critic",
     "load_policy_checkpoint",
+    "make_minibatches",
     "normalize_advantages",
     "portfolio_entropy",
     "portfolio_logprob",
     "ppo_clip_loss",
     "policy_entropy",
+    "rollout_length",
     "sample_action",
     "sample_flax_action",
     "sample_dirichlet_portfolio",
     "save_policy_checkpoint",
+    "shuffle_rollout_indices",
     "temperature_softmax",
     "train_ppo_on_split",
+    "validate_rollout_batch",
     "value_loss",
 ]
