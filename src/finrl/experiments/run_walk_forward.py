@@ -234,6 +234,7 @@ def fit_encoder_train_artifacts(
     returns: pl.DataFrame,
     config: ExperimentConfig,
     split_index: int = 0,
+    logger: TensorBoardLogger | None = None,
 ) -> tuple[np.ndarray, np.ndarray, object]:
     """Fit production encoder on train windows and encode train/test windows."""
 
@@ -258,6 +259,7 @@ def fit_encoder_train_artifacts(
         encoder_config,
         training_config,
         train_window_count=train_windows.asset.shape[0],
+        logger=logger,
     )
     variables = {"params": training.train_state.params["encoder"]}
     train_phi = _encode_windows_flax(train_windows, encoder_config, variables)
@@ -295,6 +297,7 @@ def fit_ppo_train_artifacts(
     train_spy: np.ndarray,
     config: ExperimentConfig,
     split_index: int = 0,
+    logger: TensorBoardLogger | None = None,
 ) -> ProductionPPOTrainingResult:
     """Fit production PPO on train arrays only."""
 
@@ -315,6 +318,7 @@ def fit_ppo_train_artifacts(
         ppo_config,
         jax.random.PRNGKey(config.seed + split_index),
         rollout_length=train_phi.shape[0],
+        logger=logger,
     )
 
 
@@ -397,6 +401,7 @@ def fit_train_artifacts(
             returns,
             config,
             split_index,
+            logger,
         )
     else:
         train_phi = _encode_windows(train_windows, config, split_index)
@@ -423,6 +428,7 @@ def fit_train_artifacts(
                 train_spy,
                 config,
                 split_index,
+                logger,
             )
             production_policy_state = production_ppo_training.train_state
         else:
@@ -622,16 +628,31 @@ def _log_evaluation_metrics(
     logger: TensorBoardLogger,
     step: int,
 ) -> None:
-    if artifacts.ppo_training is None:
+    if artifacts.ppo_training is None and artifacts.production_ppo_training is None:
         return
     if artifacts.train_spy_returns is None:
         raise ValueError("Train SPY returns are required for PPO evaluation logging.")
-    train_returns = np.asarray(artifacts.ppo_training.trajectory.step_results.net_return)
+    if artifacts.production_ppo_training is not None:
+        train_returns = np.asarray(
+            artifacts.production_ppo_training.rollout.step_results.net_return
+        )
+        train_turnovers = np.asarray(
+            artifacts.production_ppo_training.rollout.step_results.turnover
+        )
+        train_costs = np.asarray(
+            artifacts.production_ppo_training.rollout.step_results.transaction_cost
+        )
+    elif artifacts.ppo_training is not None:
+        train_returns = np.asarray(artifacts.ppo_training.trajectory.step_results.net_return)
+        train_turnovers = np.asarray(
+            artifacts.ppo_training.trajectory.step_results.turnover
+        )
+        train_costs = np.asarray(
+            artifacts.ppo_training.trajectory.step_results.transaction_cost
+        )
+    else:
+        raise ValueError("PPO training artifacts are required for evaluation logging.")
     train_spy = np.asarray(artifacts.train_spy_returns)
-    train_turnovers = np.asarray(artifacts.ppo_training.trajectory.step_results.turnover)
-    train_costs = np.asarray(
-        artifacts.ppo_training.trajectory.step_results.transaction_cost
-    )
     train_metrics = calculate_performance_metrics(
         train_returns,
         train_spy,

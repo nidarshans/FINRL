@@ -15,6 +15,11 @@ from finrl.models.encoder_losses import (
     EncoderPredictionHeads,
     encoder_loss,
 )
+from finrl.models.encoder_metrics import (
+    EncoderTrainMetrics,
+    encoder_metrics_to_dict,
+    finite_encoder_metrics,
+)
 from finrl.models.encoder_state import init_encoder_train_state
 from finrl.models.encoder_training import (
     EncoderBatch,
@@ -50,6 +55,7 @@ __all__ = [
     "EncoderPredictionHeads",
     "EncoderTrainingConfig",
     "EncoderTrainingResult",
+    "EncoderTrainMetrics",
     "FeatureWindow",
     "FusionMLP",
     "LookbackWindows",
@@ -62,7 +68,9 @@ __all__ = [
     "encode_market_state",
     "encode_market_state_flax",
     "encoder_loss",
+    "encoder_metrics_to_dict",
     "fit_encoder_on_train_split",
+    "finite_encoder_metrics",
     "init_encoder_pretraining_state",
     "init_encoder_train_state",
     "init_encoder_variables",

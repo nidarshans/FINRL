@@ -22,6 +22,11 @@ import numpy as np
 import optax
 from flax.training.train_state import TrainState
 
+from finrl.logging.tensorboard import TensorBoardLogger
+from finrl.models.encoder_metrics import (
+    EncoderTrainMetrics,
+    encoder_metrics_to_dict,
+)
 from finrl.models.encoder_losses import (
     EncoderLossWeights,
     EncoderPredictionHeads,
@@ -74,6 +79,16 @@ class EncoderTrainingResult:
 
     train_state: TrainState
     metrics_by_epoch: tuple[dict[str, float], ...]
+
+
+def _tree_global_norm(tree: object) -> Array:
+    """Return the global L2 norm of a gradient pytree."""
+
+    squared_norms = [
+        jnp.sum(jnp.square(leaf))
+        for leaf in jax.tree_util.tree_leaves(tree)
+    ]
+    return jnp.sqrt(jnp.sum(jnp.asarray(squared_norms)))
 
 
 def _validate_training_arrays(
@@ -200,10 +215,17 @@ def init_encoder_pretraining_state(
     return TrainState.create(apply_fn=encoder.apply, params=params, tx=optimizer)
 
 
-def _mean_metrics(metrics: Sequence[dict[str, Array]]) -> dict[str, float]:
-    keys = metrics[0].keys()
+def _mean_metrics(metrics: Sequence[EncoderTrainMetrics]) -> dict[str, float]:
+    keys = encoder_metrics_to_dict(metrics[0]).keys()
     return {
-        key: float(jnp.mean(jnp.asarray([metric[key] for metric in metrics])))
+        key: float(
+            jnp.mean(
+                jnp.asarray([
+                    encoder_metrics_to_dict(metric)[key]
+                    for metric in metrics
+                ])
+            )
+        )
         for key in keys
     }
 
@@ -213,6 +235,8 @@ def train_encoder_epoch(
     batches: Sequence[EncoderBatch],
     encoder_config: ProductionEncoderConfig,
     training_config: EncoderTrainingConfig,
+    logger: TensorBoardLogger | None = None,
+    epoch: int = 0,
 ) -> tuple[TrainState, dict[str, float]]:
     """Run one encoder pretraining epoch over prepared train-only batches."""
 
@@ -235,9 +259,20 @@ def train_encoder_epoch(
             state.params,
         )
         del loss_value
+        metrics = EncoderTrainMetrics(
+            loss=metrics["loss"],
+            market_loss=metrics["market_loss"],
+            volatility_loss=metrics["volatility_loss"],
+            cross_sectional_loss=metrics["cross_sectional_loss"],
+            l2_penalty=metrics["l2_penalty"],
+            grad_norm=_tree_global_norm(grads),
+        )
         state = state.apply_gradients(grads=grads)
         batch_metrics.append(metrics)
-    return state, _mean_metrics(batch_metrics)
+    epoch_metrics = _mean_metrics(batch_metrics)
+    if logger is not None:
+        logger.log_scalars(epoch_metrics, epoch, "encoder")
+    return state, epoch_metrics
 
 
 def fit_encoder_on_train_split(
@@ -247,6 +282,7 @@ def fit_encoder_on_train_split(
     encoder_config: ProductionEncoderConfig,
     training_config: EncoderTrainingConfig,
     train_window_count: int | None = None,
+    logger: TensorBoardLogger | None = None,
 ) -> EncoderTrainingResult:
     """Fit encoder pretraining heads using only the train split."""
 
@@ -259,12 +295,14 @@ def fit_encoder_on_train_split(
     )
     state = init_encoder_pretraining_state(rng, encoder_config, training_config)
     metrics = []
-    for _ in range(training_config.epochs):
+    for epoch in range(training_config.epochs):
         state, epoch_metrics = train_encoder_epoch(
             state,
             batches,
             encoder_config,
             training_config,
+            logger,
+            epoch,
         )
         metrics.append(epoch_metrics)
     return EncoderTrainingResult(train_state=state, metrics_by_epoch=tuple(metrics))

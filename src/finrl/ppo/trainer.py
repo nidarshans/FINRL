@@ -370,6 +370,16 @@ def _merge_diagnostics(diagnostics: list[dict[str, Array]]) -> dict[str, Array]:
     }
 
 
+def _tree_global_norm(tree: object) -> Array:
+    """Return the global L2 norm of a gradient pytree."""
+
+    squared_norms = [
+        jnp.sum(jnp.square(leaf))
+        for leaf in jax.tree_util.tree_leaves(tree)
+    ]
+    return jnp.sqrt(jnp.sum(jnp.asarray(squared_norms)))
+
+
 def _train_minibatch(
     actor_params: dict[str, Array],
     critic_params: dict[str, Array],
@@ -397,7 +407,7 @@ def _train_minibatch(
     diagnostics = {
         **diagnostics,
         "total_loss": total_loss,
-        "grad_norm": optax.global_norm(grads),
+        "grad_norm": _tree_global_norm(grads),
     }
     updates, optimizer_state = optimizer.update(
         grads,

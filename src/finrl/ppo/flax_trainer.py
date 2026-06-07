@@ -11,6 +11,7 @@ import optax
 from flax.training.train_state import TrainState
 
 from finrl.env.trading_env import EnvConfig, EnvState
+from finrl.logging.tensorboard import TensorBoardLogger
 from finrl.ppo.flax_policy import PortfolioActorFlax, ProductionPPOConfig
 from finrl.ppo.flax_value import PortfolioCriticFlax
 from finrl.ppo.gae import compute_gae
@@ -20,6 +21,7 @@ from finrl.ppo.metrics import (
     approximate_kl,
     clip_fraction,
     explained_variance,
+    ppo_metrics_to_dict,
 )
 from finrl.ppo.rollout import RolloutBatch, RolloutBuffer, collect_rollout
 from finrl.ppo.simplex_distribution import action_log_prob, policy_entropy
@@ -332,6 +334,8 @@ def train_epoch(
     train_state: ProductionPPOTrainState,
     batch: PPOUpdateBatchFlax,
     rng: Array,
+    logger: TensorBoardLogger | None = None,
+    step_offset: int = 0,
 ) -> tuple[ProductionPPOTrainState, PPOTrainMetrics]:
     """Train over one frozen rollout for up to ``config.update_epochs``."""
 
@@ -349,6 +353,12 @@ def train_epoch(
         for minibatch in minibatches:
             state, metrics = update_minibatch(state, minibatch)
             all_metrics.append(metrics)
+            if logger is not None:
+                logger.log_scalars(
+                    ppo_metrics_to_dict(metrics),
+                    step_offset + len(all_metrics),
+                    "production_ppo",
+                )
             post_update_kl = float(jax.device_get(metrics.post_update_approx_kl))
             if post_update_kl > state.config.target_kl:
                 stop = True
@@ -375,6 +385,7 @@ def train_ppo_on_split(
     config: ProductionPPOConfig,
     rng: Array,
     rollout_length: int | None = None,
+    logger: TensorBoardLogger | None = None,
 ) -> ProductionPPOTrainingResult:
     """Collect a train rollout and optimize production PPO on that split."""
 
@@ -394,7 +405,7 @@ def train_ppo_on_split(
         rollout_length=rollout_length,
     )
     update_batch = freeze_rollout_batch(rollout.batch, config, rollout.bootstrap_value)
-    state, metrics = train_epoch(state, update_batch, train_key)
+    state, metrics = train_epoch(state, update_batch, train_key, logger)
     return ProductionPPOTrainingResult(
         train_state=state,
         rollout=rollout,

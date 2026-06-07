@@ -37,6 +37,22 @@ class PPOTrainMetrics:
     epochs_completed: Array
 
 
+def ppo_metrics_to_dict(metrics: PPOTrainMetrics) -> dict[str, Array]:
+    """Return TensorBoard-friendly scalar PPO metrics."""
+
+    return {
+        name: getattr(metrics, name)
+        for name in PPOTrainMetrics.__dataclass_fields__
+    }
+
+
+def finite_ppo_metrics(metrics: PPOTrainMetrics) -> Array:
+    """Return whether all PPO diagnostics are finite scalars."""
+
+    values = jnp.asarray(list(ppo_metrics_to_dict(metrics).values()))
+    return jnp.all(jnp.isfinite(values))
+
+
 def explained_variance(values: Array, returns: Array) -> Array:
     """Return explained variance of value predictions against returns."""
 

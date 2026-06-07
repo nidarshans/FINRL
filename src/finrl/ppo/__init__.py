@@ -51,6 +51,8 @@ from finrl.ppo.metrics import (
     approximate_kl,
     clip_fraction,
     explained_variance,
+    finite_ppo_metrics,
+    ppo_metrics_to_dict,
 )
 from finrl.ppo.opt_state import create_train_state
 from finrl.ppo.policy import (
@@ -125,6 +127,7 @@ __all__ = [
     "evaluate_frozen_flax_policy",
     "evaluate_frozen_policy",
     "explained_variance",
+    "finite_ppo_metrics",
     "freeze_ppo_batch",
     "freeze_rollout_batch",
     "huber_value_loss",
@@ -138,6 +141,7 @@ __all__ = [
     "ppo_clip_loss",
     "ppo_actor_loss",
     "ppo_total_loss",
+    "ppo_metrics_to_dict",
     "policy_entropy",
     "approximate_kl",
     "clip_fraction",
