@@ -1,4 +1,9 @@
-"""Pure JAX market encoder for asset, macro, and spectral features."""
+"""Legacy pure JAX market encoder for smoke tests.
+
+Production encoder work now lives in ``finrl.models.flax_encoder``. This module
+is kept for existing tests and lightweight pipeline checks while the project
+migrates the research path to Flax.
+"""
 
 from __future__ import annotations
 
@@ -223,4 +228,3 @@ def encode_market_state(params: Params, feature_window: FeatureWindow) -> Array:
             output_dim=params["fusion_mlp"]["b2"].shape[0],  # type: ignore[index]
         )
     ).apply(params["fusion_mlp"], fused)  # type: ignore[arg-type]
-

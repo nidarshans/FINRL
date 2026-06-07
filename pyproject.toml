@@ -11,11 +11,15 @@ requires-python = ">=3.10"
 dependencies = [
     "hmmlearn>=0.3",
     "jax>=0.4.0",
+    "flax>=0.12.7",
     "numpy>=1.24",
     "optax>=0.1.7",
     "plotly>=5.0",
     "polars>=1.0",
     "scipy>=1.10",
+    "setuptools<81",
+    "tensorboard>=2.14",
+    "tensorboardX>=2.6",
     "yfinance>=0.2",
 ]
 

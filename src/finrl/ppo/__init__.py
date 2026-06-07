@@ -7,9 +7,16 @@ from finrl.ppo.distributions import (
     sample_dirichlet_portfolio,
     temperature_softmax,
 )
+from finrl.ppo.flax_policy import (
+    PortfolioActorFlax,
+    ProductionPPOConfig,
+    actor_mean_weights,
+)
+from finrl.ppo.flax_value import PortfolioCriticFlax
 from finrl.ppo.checkpoints import load_policy_checkpoint, save_policy_checkpoint
 from finrl.ppo.gae import compute_gae
 from finrl.ppo.losses import clipped_value_loss, entropy_bonus, ppo_clip_loss, value_loss
+from finrl.ppo.opt_state import create_train_state
 from finrl.ppo.policy import (
     ActorCriticState,
     PPOConfig,
@@ -44,13 +51,18 @@ __all__ = [
     "PolicyCheckpoint",
     "PortfolioAction",
     "PortfolioActor",
+    "PortfolioActorFlax",
     "PortfolioContext",
     "PortfolioCritic",
+    "PortfolioCriticFlax",
+    "ProductionPPOConfig",
     "PPOUpdateBatch",
+    "actor_mean_weights",
     "build_ppo_state",
     "clipped_value_loss",
     "collect_train_trajectory",
     "compute_gae",
+    "create_train_state",
     "dirichlet_concentration",
     "entropy_bonus",
     "evaluate_action_logprob",
