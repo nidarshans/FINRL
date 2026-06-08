@@ -23,6 +23,7 @@ class RewardConfig(NamedTuple):
     drawdown_penalty_type: str | int = "smooth"
     drawdown_temp: float = 0.01
     turnover_penalty: float = 0.1
+    active_risk_penalty: float = 0.0
     sortino_target_return: float = 0.0
     sortino_downside_penalty: float = 0.5
 
