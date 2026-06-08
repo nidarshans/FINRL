@@ -1,12 +1,5 @@
-"""PPO training package."""
+"""Production Flax PPO training package."""
 
-from finrl.ppo.distributions import (
-    dirichlet_concentration,
-    portfolio_entropy,
-    portfolio_logprob,
-    sample_dirichlet_portfolio,
-    temperature_softmax,
-)
 from finrl.ppo.batches import (
     make_minibatches,
     rollout_length,
@@ -15,10 +8,12 @@ from finrl.ppo.batches import (
 )
 from finrl.ppo.flax_policy import (
     PortfolioActorFlax,
+    PPOState,
     ProductionPortfolioAction,
     ProductionPPOConfig,
     actor_mean_weights,
-    build_ppo_state as build_flax_ppo_state,
+    build_allocation_context,
+    build_structured_ppo_state,
     sample_action as sample_flax_action,
 )
 from finrl.ppo.flax_trainer import (
@@ -55,17 +50,6 @@ from finrl.ppo.metrics import (
     finite_ppo_metrics,
     ppo_metrics_to_dict,
 )
-from finrl.ppo.opt_state import create_train_state
-from finrl.ppo.policy import (
-    ActorCriticState,
-    PPOConfig,
-    PortfolioAction,
-    PortfolioActor,
-    PortfolioContext,
-    build_ppo_state,
-    evaluate_action_logprob,
-    sample_action,
-)
 from finrl.ppo.simplex_distribution import (
     DirichletPortfolioDistribution,
     action_log_prob,
@@ -73,34 +57,11 @@ from finrl.ppo.simplex_distribution import (
     validate_simplex_action,
 )
 from finrl.ppo.rollout import RolloutBatch, RolloutBuffer, collect_rollout
-from finrl.ppo.trainer import (
-    PPOArtifacts,
-    PPOEvaluationResult,
-    PPOTrainingResult,
-    PolicyCheckpoint,
-    PPOUpdateBatch,
-    collect_train_trajectory,
-    evaluate_frozen_policy,
-    freeze_ppo_batch,
-    initialize_actor_critic,
-    normalize_advantages,
-    train_ppo_on_split,
-)
-from finrl.ppo.value import PortfolioCritic
 
 __all__ = [
-    "ActorCriticState",
     "DirichletPortfolioDistribution",
-    "PPOArtifacts",
-    "PPOConfig",
-    "PPOEvaluationResult",
-    "PPOTrainingResult",
-    "PolicyCheckpoint",
-    "PortfolioAction",
-    "PortfolioActor",
     "PortfolioActorFlax",
-    "PortfolioContext",
-    "PortfolioCritic",
+    "PPOState",
     "PortfolioCriticFlax",
     "ProductionPortfolioAction",
     "ProductionPPOConfig",
@@ -108,38 +69,27 @@ __all__ = [
     "ProductionPPOTrainState",
     "ProductionPPOTrainingResult",
     "PPOTrainMetrics",
-    "PPOUpdateBatch",
     "PPOUpdateBatchFlax",
     "RolloutBatch",
     "RolloutBuffer",
     "actor_mean_weights",
     "action_log_prob",
-    "build_ppo_state",
-    "build_flax_ppo_state",
+    "build_allocation_context",
+    "build_structured_ppo_state",
     "clipped_value_loss",
-    "collect_train_trajectory",
     "collect_rollout",
     "compute_gae",
-    "create_train_state",
     "critic_loss",
-    "dirichlet_concentration",
     "entropy_bonus",
-    "evaluate_action_logprob",
     "evaluate_frozen_flax_policy",
-    "evaluate_frozen_policy",
     "explained_variance",
     "finite_ppo_metrics",
-    "freeze_ppo_batch",
     "freeze_rollout_batch",
     "huber_value_loss",
-    "initialize_actor_critic",
     "initialize_ppo_train_state",
     "load_policy_checkpoint",
     "make_minibatches",
-    "normalize_advantages",
-    "portfolio_entropy",
     "portfolio_allocation_entropy",
-    "portfolio_logprob",
     "ppo_clip_loss",
     "ppo_actor_loss",
     "ppo_total_loss",
@@ -150,13 +100,10 @@ __all__ = [
     "rollout_length",
     "sample_action",
     "sample_flax_action",
-    "sample_dirichlet_portfolio",
     "save_policy_checkpoint",
     "shuffle_rollout_indices",
-    "temperature_softmax",
     "train_epoch",
     "train_flax_ppo_on_split",
-    "train_ppo_on_split",
     "update_minibatch",
     "validate_rollout_batch",
     "validate_simplex_action",

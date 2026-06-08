@@ -1,19 +1,19 @@
 """Production Flax market encoder.
 
-The production encoder maps a no-look-ahead market window to
-``phi_t in R^32`` using the architecture described in
-``PRODUCTION_PPO_ENCODER_PLAN.md``:
+The production encoder maps no-look-ahead feature windows to the latent
+components used by the per-asset allocator:
 
 1. shared asset LSTM over each asset's lookback sequence,
 2. cross-asset self-attention,
-3. attention pooling over assets,
+3. attention pooling over assets into a market vector,
 4. macro LSTM over the macro lookback sequence,
-5. fusion MLP over asset, macro, and current-date spectral features.
+5. pass-through current-date spectral state.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -34,8 +34,6 @@ class ProductionEncoderConfig:
     asset_hidden_dim: int = 64
     macro_hidden_dim: int = 16
     attention_heads: int = 4
-    fusion_hidden_dim: int = 64
-    output_dim: int = 32
     normalize_output: bool = True
 
     def __post_init__(self) -> None:
@@ -53,8 +51,15 @@ class ProductionEncoderConfig:
             raise ValueError("attention_heads must be positive.")
         if self.asset_hidden_dim % self.attention_heads != 0:
             raise ValueError("asset_hidden_dim must be divisible by attention_heads.")
-        if self.fusion_hidden_dim <= 0 or self.output_dim <= 0:
-            raise ValueError("fusion and output dimensions must be positive.")
+
+
+class EncoderOutput(NamedTuple):
+    """Per-asset and global market representations for downstream models."""
+
+    asset_embeddings: Array
+    market_vector: Array
+    macro_state: Array
+    spectral_state: Array
 
 
 class _LSTMFinalState(nn.Module):
@@ -171,7 +176,7 @@ class AttentionPool(nn.Module):
 
 
 class MarketEncoderFlax(nn.Module):
-    """End-to-end production market encoder producing ``phi_t in R^32``."""
+    """End-to-end production market encoder producing pooled market vectors."""
 
     config: ProductionEncoderConfig
 
@@ -182,7 +187,33 @@ class MarketEncoderFlax(nn.Module):
         macro_window: Array,
         spectral_row: Array,
     ) -> Array:
-        """Encode one market window into a compact state vector."""
+        """Encode one market window into the pooled asset market vector."""
+
+        asset_embeddings = AssetLSTMEncoder(
+            hidden_dim=self.config.asset_hidden_dim,
+            name="asset_lstm_encoder",
+        )(asset_window)
+        attended_assets = CrossAssetSelfAttention(
+            hidden_dim=self.config.asset_hidden_dim,
+            num_heads=self.config.attention_heads,
+            name="cross_asset_attention",
+        )(asset_embeddings)
+        pooled_assets = AttentionPool(
+            hidden_dim=self.config.asset_hidden_dim,
+            name="asset_attention_pool",
+        )(attended_assets)
+        if self.config.normalize_output:
+            pooled_assets = nn.LayerNorm(name="market_vector_norm")(pooled_assets)
+        return pooled_assets
+
+    @nn.compact
+    def encode_with_latents(
+        self,
+        asset_window: Array,
+        macro_window: Array,
+        spectral_row: Array,
+    ) -> EncoderOutput:
+        """Encode one market window and expose diagram-level components."""
 
         asset_embeddings = AssetLSTMEncoder(
             hidden_dim=self.config.asset_hidden_dim,
@@ -202,21 +233,14 @@ class MarketEncoderFlax(nn.Module):
             name="macro_lstm_encoder",
         )(macro_window)
 
-        fused_input = jnp.concatenate(
-            [
-                pooled_assets,
-                macro_embedding,
-                spectral_row.astype(jnp.float32),
-            ],
-            axis=-1,
-        )
-        hidden = nn.Dense(self.config.fusion_hidden_dim, name="fusion_hidden")(fused_input)
-        hidden = nn.gelu(hidden)
-        hidden = nn.LayerNorm(name="fusion_norm")(hidden)
-        phi = nn.Dense(self.config.output_dim, name="phi")(hidden)
         if self.config.normalize_output:
-            phi = nn.LayerNorm(name="phi_norm")(phi)
-        return phi
+            pooled_assets = nn.LayerNorm(name="market_vector_norm")(pooled_assets)
+        return EncoderOutput(
+            asset_embeddings=attended_assets,
+            market_vector=pooled_assets,
+            macro_state=macro_embedding,
+            spectral_state=spectral_row.astype(jnp.float32),
+        )
 
 
 def init_encoder_variables(
@@ -235,7 +259,13 @@ def init_encoder_variables(
         dtype=jnp.float32,
     )
     spectral_row = jnp.zeros((config.spectral_feature_dim,), dtype=jnp.float32)
-    return module.init(rng, asset_window, macro_window, spectral_row)
+    return module.init(
+        rng,
+        asset_window,
+        macro_window,
+        spectral_row,
+        method=MarketEncoderFlax.encode_with_latents,
+    )
 
 
 def encode_market_state_flax(
@@ -248,3 +278,21 @@ def encode_market_state_flax(
     """Apply the production encoder to one feature window."""
 
     return MarketEncoderFlax(config).apply(variables, asset_window, macro_window, spectral_row)
+
+
+def encode_market_state_with_latents_flax(
+    variables: dict[str, object],
+    asset_window: Array,
+    macro_window: Array,
+    spectral_row: Array,
+    config: ProductionEncoderConfig,
+) -> EncoderOutput:
+    """Apply the production encoder and return per-asset plus global latents."""
+
+    return MarketEncoderFlax(config).apply(
+        variables,
+        asset_window,
+        macro_window,
+        spectral_row,
+        method=MarketEncoderFlax.encode_with_latents,
+    )

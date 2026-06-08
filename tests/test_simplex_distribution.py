@@ -25,12 +25,26 @@ def test_dirichlet_distribution_mean_is_on_simplex() -> None:
 
     mean = distribution.mean()
     concentration = distribution.concentration()
+    expected = concentration / jnp.sum(concentration)
 
     assert mean.shape == (3,)
     assert concentration.shape == (3,)
     assert jnp.all(mean >= 0.0)
     assert jnp.all(concentration > 0.0)
     assert_allclose(jnp.sum(mean), 1.0, rtol=1e-6, atol=1e-8)
+    assert_allclose(mean, expected, rtol=1e-6, atol=1e-8)
+
+
+def test_min_concentration_changes_deterministic_mean() -> None:
+    logits = jnp.array([4.0, -2.0, -3.0], dtype=jnp.float32)
+    low_floor = ProductionPPOConfig(n_assets=3, min_concentration=1e-3)
+    high_floor = ProductionPPOConfig(n_assets=3, min_concentration=5.0)
+
+    low_mean = DirichletPortfolioDistribution(logits, low_floor).mean()
+    high_mean = DirichletPortfolioDistribution(logits, high_floor).mean()
+
+    assert bool(high_mean[-1] > low_mean[-1])
+    assert_allclose(jnp.sum(high_mean), 1.0, rtol=1e-6, atol=1e-8)
 
 
 def test_action_log_prob_matches_scipy_reference() -> None:

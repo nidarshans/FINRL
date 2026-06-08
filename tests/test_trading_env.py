@@ -36,16 +36,16 @@ def test_environment_step_updates_all_accounting_fields() -> None:
 
     result = environment_step(state, target_weights, asset_returns, spy_return, config)
 
-    assert_allclose(result.turnover, 0.6, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.transaction_cost, 0.0006, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 0.3, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.transaction_cost, 0.0003, rtol=RTOL, atol=ATOL)
     assert_allclose(result.gross_return, -0.0007, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.net_return, -0.0013, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.state.portfolio_value, 99.87, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.net_return, -0.0010, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.state.portfolio_value, 99.9, rtol=RTOL, atol=ATOL)
     assert_allclose(result.state.peak_value, 100.0, rtol=RTOL, atol=ATOL)
-    expected_drawdown = np.float32(1.0) - np.float32(99.87) / np.float32(100.0)
+    expected_drawdown = np.float32(1.0) - np.float32(99.9) / np.float32(100.0)
     assert_allclose(result.state.drawdown, expected_drawdown, rtol=RTOL, atol=ATOL)
     assert_allclose(result.state.weights, target_weights, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.state.previous_turnover, 0.6, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.state.previous_turnover, 0.3, rtol=RTOL, atol=ATOL)
     assert int(result.state.step) == 1
     assert bool(jnp.isfinite(result.reward))
 
@@ -119,8 +119,8 @@ def test_environment_step_high_turnover_with_zero_returns_is_finite() -> None:
         EnvConfig(transaction_cost_rate=0.001),
     )
 
-    assert_allclose(result.turnover, 1.6, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.transaction_cost, 0.0016, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 0.8, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.transaction_cost, 0.0008, rtol=RTOL, atol=ATOL)
     assert bool(jnp.isfinite(result.net_return))
     assert bool(jnp.isfinite(result.reward))
 
@@ -136,8 +136,30 @@ def test_environment_step_supports_jit() -> None:
         EnvConfig(transaction_cost_rate=0.001),
     )
 
-    assert_allclose(result.turnover, 0.6, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.state.portfolio_value, 99.87, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 0.3, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.state.portfolio_value, 99.9, rtol=RTOL, atol=ATOL)
+
+
+def test_invalid_actions_preserve_previous_weights() -> None:
+    state = _initial_state()
+    returns = jnp.array([0.01, -0.02, 0.0], dtype=jnp.float32)
+
+    for action in (
+        jnp.array([-1.0, -2.0, -3.0], dtype=jnp.float32),
+        jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        jnp.array([jnp.nan, 0.0, 1.0], dtype=jnp.float32),
+        jnp.array([jnp.inf, 0.0, 1.0], dtype=jnp.float32),
+    ):
+        result = environment_step(
+            state,
+            action,
+            returns,
+            jnp.array(0.0, dtype=jnp.float32),
+            EnvConfig(transaction_cost_rate=0.0),
+        )
+
+        assert_allclose(result.state.weights, state.weights, rtol=RTOL, atol=ATOL)
+        assert_allclose(result.turnover, 0.0, rtol=RTOL, atol=ATOL)
 
 
 def test_scan_environment_runs_multiple_weekly_steps() -> None:

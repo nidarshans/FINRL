@@ -33,16 +33,16 @@ class EncoderLossWeights:
 
 
 class EncoderPredictionHeads(nn.Module):
-    """Prediction heads trained on top of ``phi_t`` during encoder pretraining."""
+    """Prediction heads trained on top of the pooled market vector."""
 
     n_assets: int
     hidden_dim: int = 64
 
     @nn.compact
-    def __call__(self, phi: Array) -> dict[str, Array]:
+    def __call__(self, market_vector: Array) -> dict[str, Array]:
         """Predict market, volatility, and cross-sectional next-return labels."""
 
-        hidden = nn.Dense(self.hidden_dim, name="hidden")(phi)
+        hidden = nn.Dense(self.hidden_dim, name="hidden")(market_vector)
         hidden = nn.gelu(hidden)
         market = nn.Dense(1, name="market_return")(hidden).squeeze(axis=-1)
         volatility = nn.Dense(1, name="volatility")(hidden).squeeze(axis=-1)
@@ -94,10 +94,10 @@ def encoder_loss(
     encoder = MarketEncoderFlax(encoder_config)
     heads = EncoderPredictionHeads(
         n_assets=encoder_config.n_assets,
-        hidden_dim=encoder_config.fusion_hidden_dim,
+        hidden_dim=encoder_config.asset_hidden_dim,
     )
 
-    phi = jax.vmap(
+    market_vectors = jax.vmap(
         lambda asset_window, macro_window, spectral_row: encoder.apply(
             {"params": params["encoder"]},
             asset_window,
@@ -105,7 +105,7 @@ def encoder_loss(
             spectral_row,
         )
     )(batch.asset_window, batch.macro_window, batch.spectral_row)
-    predictions = heads.apply({"params": params["heads"]}, phi)
+    predictions = heads.apply({"params": params["heads"]}, market_vectors)
 
     market_loss = jnp.mean(
         huber_loss(

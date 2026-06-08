@@ -28,13 +28,13 @@ def test_calculate_turnover() -> None:
 
     turnover = calculate_turnover(current, target)
 
-    assert_allclose(turnover, 0.6, rtol=RTOL, atol=ATOL)
+    assert_allclose(turnover, 0.3, rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_transaction_cost() -> None:
-    cost = calculate_transaction_cost(jnp.array(0.6, dtype=jnp.float32), 0.001)
+    cost = calculate_transaction_cost(jnp.array(0.3, dtype=jnp.float32), 0.001)
 
-    assert_allclose(cost, 0.0006, rtol=RTOL, atol=ATOL)
+    assert_allclose(cost, 0.0003, rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_gross_portfolio_return_includes_cash_return() -> None:
@@ -49,28 +49,28 @@ def test_calculate_gross_portfolio_return_includes_cash_return() -> None:
 def test_calculate_net_portfolio_return() -> None:
     net_return = calculate_net_portfolio_return(
         jnp.array(0.00775, dtype=jnp.float32),
-        jnp.array(0.0006, dtype=jnp.float32),
+        jnp.array(0.0003, dtype=jnp.float32),
     )
 
-    assert_allclose(net_return, 0.00715, rtol=RTOL, atol=ATOL)
+    assert_allclose(net_return, 0.00745, rtol=RTOL, atol=ATOL)
 
 
 def test_update_portfolio_value() -> None:
     new_value = update_portfolio_value(
         jnp.array(100.0, dtype=jnp.float32),
-        jnp.array(0.00715, dtype=jnp.float32),
+        jnp.array(0.00745, dtype=jnp.float32),
     )
 
-    assert_allclose(new_value, 100.715, rtol=RTOL, atol=ATOL)
+    assert_allclose(new_value, 100.745, rtol=RTOL, atol=ATOL)
 
 
 def test_update_running_peak() -> None:
     peak = update_running_peak(
         jnp.array(100.0, dtype=jnp.float32),
-        jnp.array(100.715, dtype=jnp.float32),
+        jnp.array(100.745, dtype=jnp.float32),
     )
 
-    assert_allclose(peak, 100.715, rtol=RTOL, atol=ATOL)
+    assert_allclose(peak, 100.745, rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_drawdown() -> None:
@@ -108,6 +108,7 @@ def test_calculate_spy_relative_reward_with_drawdown_and_turnover_penalty() -> N
         config=RewardConfig(
             drawdown_limit=0.2,
             drawdown_penalty=2.0,
+            drawdown_penalty_type="hinge",
             turnover_penalty=0.1,
         ),
     )
@@ -146,12 +147,23 @@ def test_normalize_long_only_weights_clips_negative_values() -> None:
     assert bool(jnp.all(weights >= 0.0))
 
 
-def test_normalize_long_only_weights_falls_back_to_equal_weight() -> None:
+def test_normalize_long_only_weights_falls_back_to_cash() -> None:
     weights = normalize_long_only_weights(
         jnp.array([-1.0, 0.0, -2.0], dtype=jnp.float32)
     )
 
-    assert_allclose(weights, [1.0 / 3.0] * 3, rtol=RTOL, atol=ATOL)
+    assert_allclose(weights, [0.0, 0.0, 1.0], rtol=RTOL, atol=ATOL)
+
+
+def test_normalize_long_only_weights_can_fall_back_to_previous_weights() -> None:
+    previous = jnp.array([0.25, 0.25, 0.5], dtype=jnp.float32)
+
+    weights = normalize_long_only_weights(
+        jnp.array([jnp.nan, 0.0, jnp.inf], dtype=jnp.float32),
+        fallback_weights=previous,
+    )
+
+    assert_allclose(weights, previous, rtol=RTOL, atol=ATOL)
 
 
 def test_accounting_functions_support_jit_and_float32() -> None:

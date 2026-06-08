@@ -8,9 +8,9 @@ from finrl.types import Array
 
 
 def calculate_turnover(current_weights: Array, target_weights: Array) -> Array:
-    """Return one-way turnover between current and target allocations."""
+    """Return institutional one-way turnover between two allocations."""
 
-    return jnp.sum(jnp.abs(target_weights - current_weights))
+    return 0.5 * jnp.sum(jnp.abs(target_weights - current_weights))
 
 
 def calculate_transaction_cost(turnover: Array, cost_rate: float | Array) -> Array:
@@ -51,11 +51,31 @@ def calculate_drawdown(portfolio_value: Array, peak_value: Array) -> Array:
     return 1.0 - portfolio_value / peak_value
 
 
-def normalize_long_only_weights(raw_weights: Array) -> Array:
-    """Project nonnegative weights onto the long-only simplex by rescaling."""
+def cash_weights_like(raw_weights: Array, cash_index: int = -1) -> Array:
+    """Return a 100% cash allocation with the same shape as ``raw_weights``."""
 
-    clipped = jnp.maximum(raw_weights, 0.0)
+    weights = jnp.zeros_like(raw_weights)
+    return weights.at[cash_index].set(1.0)
+
+
+def normalize_long_only_weights(
+    raw_weights: Array,
+    fallback_weights: Array | None = None,
+    cash_index: int = -1,
+) -> Array:
+    """Project finite nonnegative weights onto the long-only simplex.
+
+    Invalid or all-zero inputs fall back to ``fallback_weights`` when supplied,
+    otherwise to 100% cash.
+    """
+
+    finite = jnp.all(jnp.isfinite(raw_weights))
+    cleaned = jnp.where(jnp.isfinite(raw_weights), raw_weights, 0.0)
+    clipped = jnp.maximum(cleaned, 0.0)
     total = jnp.sum(clipped)
-    num_assets = clipped.shape[0]
-    equal_weights = jnp.ones_like(clipped) / num_assets
-    return jnp.where(total > 0.0, clipped / total, equal_weights)
+    fallback = (
+        cash_weights_like(raw_weights, cash_index)
+        if fallback_weights is None
+        else jnp.asarray(fallback_weights, dtype=raw_weights.dtype)
+    )
+    return jnp.where((total > 0.0) & finite, clipped / total, fallback)

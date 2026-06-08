@@ -16,7 +16,8 @@ from finrl.ppo import (
     PortfolioCriticFlax,
     ProductionPPOConfig,
     actor_mean_weights,
-    create_train_state,
+    build_structured_ppo_state,
+    initialize_ppo_train_state,
 )
 
 
@@ -41,7 +42,7 @@ def test_production_encoder_initializes_and_runs_on_tiny_arrays() -> None:
     macro_window = jnp.ones((4, 2), dtype=jnp.float32)
     spectral_row = jnp.ones((20,), dtype=jnp.float32)
 
-    phi = encode_market_state_flax(
+    market_vectors = encode_market_state_flax(
         variables,
         asset_window,
         macro_window,
@@ -49,54 +50,32 @@ def test_production_encoder_initializes_and_runs_on_tiny_arrays() -> None:
         config,
     )
 
-    assert phi.shape == (32,)
-    assert jnp.isfinite(phi).all()
+    assert market_vectors.shape == (64,)
+    assert jnp.isfinite(market_vectors).all()
 
 
 def test_production_actor_and_critic_initialize_on_tiny_state() -> None:
     config = ProductionPPOConfig(n_assets=4, n_regimes=2)
-    state = jnp.ones((config.state_dim,), dtype=jnp.float32)
-    actor = PortfolioActorFlax(config)
-    critic = PortfolioCriticFlax(config)
-    actor_variables = actor.init(jax.random.PRNGKey(1), state)
-    critic_variables = critic.init(jax.random.PRNGKey(2), state)
+    state = build_structured_ppo_state(
+        asset_embeddings=jnp.ones((3, 64), dtype=jnp.float32),
+        market_vector=jnp.ones((config.phi_dim,), dtype=jnp.float32),
+        macro_state=jnp.ones((16,), dtype=jnp.float32),
+        spectral_state=jnp.ones((20,), dtype=jnp.float32),
+        regime_probs=jnp.ones((2,), dtype=jnp.float32) / 2.0,
+        prev_weights=jnp.ones((4,), dtype=jnp.float32) / 4.0,
+        drawdown=jnp.array(0.0, dtype=jnp.float32),
+        previous_turnover=jnp.array(0.0, dtype=jnp.float32),
+    )
+    train_state = initialize_ppo_train_state(jax.random.PRNGKey(1), config)
 
-    logits = actor.apply(actor_variables, state)
+    logits = train_state.actor.apply_fn({"params": train_state.actor.params}, state)
     weights = actor_mean_weights(logits, config)
-    value = critic.apply(critic_variables, state)
+    value = train_state.critic.apply_fn({"params": train_state.critic.params}, state)
 
-    assert config.state_dim == 40
+    assert config.state_dim == 108
     assert logits.shape == (4,)
     assert weights.shape == (4,)
     assert jnp.all(weights >= 0.0)
     assert jnp.allclose(jnp.sum(weights), 1.0)
     assert value.shape == ()
     assert jnp.isfinite(value)
-
-
-def test_create_train_state_wraps_flax_params_with_optax() -> None:
-    config = ProductionPPOConfig(n_assets=4, n_regimes=2)
-    state = jnp.ones((config.state_dim,), dtype=jnp.float32)
-    actor = PortfolioActorFlax(config)
-    variables = actor.init(jax.random.PRNGKey(3), state)
-
-    train_state = create_train_state(
-        apply_fn=actor.apply,
-        params=variables["params"],
-        learning_rate=1e-3,
-    )
-
-    assert train_state.step == 0
-    assert "hidden_0" in train_state.params
-
-
-def test_existing_smoke_test_encoder_and_ppo_imports_still_work() -> None:
-    from finrl.models import EncoderConfig, MarketEncoder
-    from finrl.ppo import PPOConfig, PortfolioActor
-
-    smoke_encoder = MarketEncoder(EncoderConfig(lookback=2, n_assets=2))
-    smoke_actor = PortfolioActor(PPOConfig(n_assets=3))
-
-    assert smoke_encoder.config.lookback == 2
-    assert smoke_actor.config.n_assets == 3
-

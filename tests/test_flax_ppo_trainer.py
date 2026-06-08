@@ -15,6 +15,7 @@ from finrl.ppo import (
     ProductionPPOConfig,
     RolloutBatch,
     action_log_prob,
+    build_structured_ppo_state,
     compute_gae,
     critic_loss,
     evaluate_frozen_flax_policy,
@@ -43,6 +44,9 @@ def _config(**overrides: object) -> ProductionPPOConfig:
     values = {
         "n_assets": 3,
         "n_regimes": 2,
+        "asset_latent_dim": 4,
+        "macro_dim": 3,
+        "spectral_dim": 5,
         "actor_hidden_dims": (8,),
         "critic_hidden_dims": (8,),
         "update_epochs": 1,
@@ -54,8 +58,13 @@ def _config(**overrides: object) -> ProductionPPOConfig:
     return ProductionPPOConfig(**values)
 
 
-def _arrays(n_steps: int = 3) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    phi = jnp.arange(n_steps * 32, dtype=jnp.float32).reshape(n_steps, 32) / 100.0
+def _arrays(n_steps: int = 3) -> tuple[jax.Array, ...]:
+    market_vectors = jnp.arange(n_steps * 64, dtype=jnp.float32).reshape(n_steps, 64) / 100.0
+    embeddings = (
+        jnp.arange(n_steps * 2 * 4, dtype=jnp.float32).reshape(n_steps, 2, 4) / 100.0
+    )
+    macro = jnp.ones((n_steps, 3), dtype=jnp.float32)
+    spectral = jnp.ones((n_steps, 5), dtype=jnp.float32)
     regimes = jnp.ones((n_steps, 2), dtype=jnp.float32) / 2.0
     returns = jnp.array(
         [
@@ -67,7 +76,25 @@ def _arrays(n_steps: int = 3) -> tuple[jax.Array, jax.Array, jax.Array, jax.Arra
         dtype=jnp.float32,
     )[:n_steps]
     spy = jnp.array([0.005, 0.004, -0.002, 0.01], dtype=jnp.float32)[:n_steps]
-    return phi, regimes, returns, spy
+    return market_vectors, embeddings, macro, spectral, regimes, returns, spy
+
+
+def _state_batch(config: ProductionPPOConfig, n_steps: int = 3):
+    return build_structured_ppo_state(
+        asset_embeddings=jnp.ones(
+            (n_steps, config.n_assets - 1, config.asset_latent_dim),
+            dtype=jnp.float32,
+        ),
+        market_vector=jnp.ones((n_steps, config.phi_dim), dtype=jnp.float32),
+        macro_state=jnp.ones((n_steps, config.macro_dim), dtype=jnp.float32),
+        spectral_state=jnp.ones((n_steps, config.spectral_dim), dtype=jnp.float32),
+        regime_probs=jnp.ones((n_steps, config.n_regimes), dtype=jnp.float32)
+        / config.n_regimes,
+        prev_weights=jnp.ones((n_steps, config.n_assets), dtype=jnp.float32)
+        / config.n_assets,
+        drawdown=jnp.zeros((n_steps,), dtype=jnp.float32),
+        previous_turnover=jnp.zeros((n_steps,), dtype=jnp.float32),
+    )
 
 
 def _tree_delta(left: object, right: object) -> float:
@@ -102,7 +129,7 @@ def test_freeze_rollout_batch_bootstraps_truncated_final_step() -> None:
         phi_dim=1,
     )
     rollout = RolloutBatch(
-        states=jnp.zeros((1, config.state_dim), dtype=jnp.float32),
+        states=_state_batch(config, 1),
         actions=jnp.ones((1, config.action_dim), dtype=jnp.float32) / config.action_dim,
         old_log_probs=jnp.zeros((1,), dtype=jnp.float32),
         rewards=jnp.array([1.0], dtype=jnp.float32),
@@ -128,11 +155,11 @@ def test_freeze_rollout_batch_bootstraps_truncated_final_step() -> None:
 
 def test_one_minibatch_update_changes_actor_and_critic_params() -> None:
     config = _config()
-    phi, regimes, returns, spy = _arrays()
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays()
     rng = jax.random.PRNGKey(0)
     init_key, _, _ = jax.random.split(rng, 3)
     result = train_flax_ppo_on_split(
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -140,6 +167,9 @@ def test_one_minibatch_update_changes_actor_and_critic_params() -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         rng,
+        embeddings,
+        macro,
+        spectral,
     )
     initial = initialize_ppo_train_state(init_key, config)
 
@@ -171,14 +201,14 @@ def test_portfolio_allocation_entropy_matches_hand_computed_fixture() -> None:
     assert_allclose(entropy[1], 0.0, rtol=1e-6, atol=1e-6)
 
 
-def test_portfolio_entropy_penalty_increases_total_loss() -> None:
+def test_portfolio_entropy_bonus_decreases_total_loss() -> None:
     base_config = _config(use_value_clipping=False)
     penalized_config = _config(
         use_value_clipping=False,
         portfolio_entropy_coef=0.5,
     )
     state = initialize_ppo_train_state(jax.random.PRNGKey(11), base_config)
-    states = jnp.ones((3, base_config.state_dim), dtype=jnp.float32)
+    states = _state_batch(base_config)
     actor_logits = jax.vmap(
         lambda row: state.actor.apply_fn({"params": state.actor.params}, row)
     )(states)
@@ -218,13 +248,13 @@ def test_portfolio_entropy_penalty_increases_total_loss() -> None:
     )
 
     assert_allclose(base_metrics.portfolio_entropy, jnp.log(3.0), rtol=1e-5)
-    assert penalized_metrics.total_loss > base_metrics.total_loss
+    assert penalized_metrics.total_loss < base_metrics.total_loss
 
 
 def test_value_loss_decreases_on_tiny_supervised_fixture() -> None:
     config = _config(use_value_clipping=False, learning_rate=5e-3)
     state = initialize_ppo_train_state(jax.random.PRNGKey(1), config)
-    states = jnp.ones((3, config.state_dim), dtype=jnp.float32)
+    states = _state_batch(config)
     actor_logits = jax.vmap(
         lambda row: state.actor.apply_fn({"params": state.actor.params}, row)
     )(states)
@@ -277,9 +307,9 @@ def test_huber_critic_loss_matches_hand_computed_fixture() -> None:
 
 def test_frozen_evaluation_does_not_update_train_state() -> None:
     config = _config()
-    phi, regimes, returns, spy = _arrays()
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays()
     trained = train_flax_ppo_on_split(
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -287,17 +317,23 @@ def test_frozen_evaluation_does_not_update_train_state() -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(2),
+        embeddings,
+        macro,
+        spectral,
     )
 
     evaluated = evaluate_frozen_flax_policy(
         trained.train_state,
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
         _initial_state(config.action_dim),
         EnvConfig(transaction_cost_rate=0.0),
         jax.random.PRNGKey(3),
+        embeddings,
+        macro,
+        spectral,
     )
 
     assert _tree_delta(trained.train_state.actor.params, evaluated.train_state.actor.params) == 0.0
@@ -311,9 +347,9 @@ def test_frozen_evaluation_does_not_update_train_state() -> None:
 
 def test_checkpoint_round_trip_preserves_train_state(tmp_path: Path) -> None:
     config = _config()
-    phi, regimes, returns, spy = _arrays()
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays()
     result = train_flax_ppo_on_split(
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -321,6 +357,9 @@ def test_checkpoint_round_trip_preserves_train_state(tmp_path: Path) -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(4),
+        embeddings,
+        macro,
+        spectral,
     )
     path = tmp_path / "production_ppo.pkl"
 

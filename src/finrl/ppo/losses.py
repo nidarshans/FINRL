@@ -98,7 +98,15 @@ def ppo_total_loss(
     entropy: Array,
     value_coef: float,
     entropy_coef: float,
+    portfolio_entropy: Array | None = None,
+    portfolio_entropy_coef: float = 0.0,
 ) -> Array:
-    """Combine actor, critic, and entropy terms into PPO total loss."""
+    """Combine PPO losses, rewarding policy and portfolio entropy."""
 
-    return actor_loss + value_coef * critic_loss_value - entropy_coef * entropy
+    allocation_entropy = 0.0 if portfolio_entropy is None else portfolio_entropy
+    return (
+        actor_loss
+        + value_coef * critic_loss_value
+        - entropy_coef * entropy
+        - portfolio_entropy_coef * allocation_entropy
+    )

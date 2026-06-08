@@ -193,7 +193,7 @@ def init_encoder_pretraining_state(
     encoder = MarketEncoderFlax(encoder_config)
     heads = EncoderPredictionHeads(
         n_assets=encoder_config.n_assets,
-        hidden_dim=encoder_config.fusion_hidden_dim,
+        hidden_dim=encoder_config.asset_hidden_dim,
     )
     asset_window = jnp.zeros(
         (encoder_config.lookback, encoder_config.n_assets, encoder_config.asset_feature_dim),
@@ -204,9 +204,15 @@ def init_encoder_pretraining_state(
         dtype=jnp.float32,
     )
     spectral_row = jnp.zeros((encoder_config.spectral_feature_dim,), dtype=jnp.float32)
-    phi = jnp.zeros((encoder_config.output_dim,), dtype=jnp.float32)
-    encoder_variables = encoder.init(encoder_key, asset_window, macro_window, spectral_row)
-    head_variables = heads.init(heads_key, phi)
+    market_vector = jnp.zeros((encoder_config.asset_hidden_dim,), dtype=jnp.float32)
+    encoder_variables = encoder.init(
+        encoder_key,
+        asset_window,
+        macro_window,
+        spectral_row,
+        method=MarketEncoderFlax.encode_with_latents,
+    )
+    head_variables = heads.init(heads_key, market_vector)
     params = {
         "encoder": encoder_variables["params"],
         "heads": head_variables["params"],

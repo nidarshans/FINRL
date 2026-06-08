@@ -46,12 +46,12 @@ def _normalize_vector(values: NDArray[np.floating]) -> FloatArray:
 
 
 def fit_hmm(
-    train_phi: NDArray[np.floating] | list[list[float]],
+    train_market_vectors: NDArray[np.floating] | list[list[float]],
     config: HMMConfig,
 ) -> FittedHMM:
-    """Fit a diagonal Gaussian HMM with ``hmmlearn`` on train states only."""
+    """Fit a diagonal Gaussian HMM with ``hmmlearn`` on train market vectors only."""
 
-    observations = _as_2d_float_array(train_phi)
+    observations = _as_2d_float_array(train_market_vectors)
     if observations.shape[0] < config.n_states:
         raise ValueError("HMM fitting requires at least n_states observations.")
 
@@ -86,18 +86,18 @@ def fit_hmm(
 
 
 def annual_hmm_refit(
-    train_phi_by_split: Mapping[object, NDArray[np.floating] | list[list[float]]]
+    train_market_vectors_by_split: Mapping[object, NDArray[np.floating] | list[list[float]]]
     | Iterable[NDArray[np.floating] | list[list[float]]],
     config: HMMConfig,
 ) -> tuple[FittedHMM, ...]:
     """Fit one frozen HMM per walk-forward train split."""
 
     sequences = (
-        train_phi_by_split.values()
-        if isinstance(train_phi_by_split, Mapping)
-        else train_phi_by_split
+        train_market_vectors_by_split.values()
+        if isinstance(train_market_vectors_by_split, Mapping)
+        else train_market_vectors_by_split
     )
-    return tuple(fit_hmm(train_phi, config) for train_phi in sequences)
+    return tuple(fit_hmm(train_market_vectors, config) for train_market_vectors in sequences)
 
 
 __all__ = [

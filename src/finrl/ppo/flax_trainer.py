@@ -12,7 +12,12 @@ from flax.training.train_state import TrainState
 
 from finrl.env.trading_env import EnvConfig, EnvState
 from finrl.logging.tensorboard import TensorBoardLogger
-from finrl.ppo.flax_policy import PortfolioActorFlax, ProductionPPOConfig
+from finrl.ppo.flax_policy import (
+    PPOState,
+    PortfolioActorFlax,
+    ProductionPPOConfig,
+    build_structured_ppo_state,
+)
 from finrl.ppo.flax_value import PortfolioCriticFlax
 from finrl.ppo.gae import compute_gae
 from finrl.ppo.losses import critic_loss, ppo_actor_loss, ppo_total_loss
@@ -31,7 +36,7 @@ from finrl.types import Array
 class PPOUpdateBatchFlax(NamedTuple):
     """Frozen tensors used for production PPO minibatch updates."""
 
-    states: Array
+    states: Array | PPOState
     actions: Array
     old_log_probs: Array
     advantages: Array
@@ -90,7 +95,19 @@ def initialize_ppo_train_state(
     """Initialize production Flax actor and critic train states."""
 
     actor_key, critic_key = jax.random.split(rng)
-    state = jnp.zeros((config.state_dim,), dtype=jnp.float32)
+    state = build_structured_ppo_state(
+        asset_embeddings=jnp.zeros(
+            (config.action_dim - 1, config.asset_latent_dim),
+            dtype=jnp.float32,
+        ),
+        market_vector=jnp.zeros((config.phi_dim,), dtype=jnp.float32),
+        macro_state=jnp.zeros((config.macro_dim,), dtype=jnp.float32),
+        spectral_state=jnp.zeros((config.spectral_dim,), dtype=jnp.float32),
+        regime_probs=jnp.zeros((config.n_regimes,), dtype=jnp.float32),
+        prev_weights=jnp.zeros((config.action_dim,), dtype=jnp.float32).at[-1].set(1.0),
+        drawdown=jnp.array(0.0, dtype=jnp.float32),
+        previous_turnover=jnp.array(0.0, dtype=jnp.float32),
+    )
     actor = PortfolioActorFlax(config)
     critic = PortfolioCriticFlax(config)
     tx = _optimizer(config)
@@ -165,7 +182,7 @@ def freeze_rollout_batch(
 def _take_update_batch(batch: PPOUpdateBatchFlax, indices: Array) -> PPOUpdateBatchFlax:
     return PPOUpdateBatchFlax(
         **{
-            name: value[indices]
+            name: jax.tree_util.tree_map(lambda leaf: leaf[indices], value)
             for name, value in batch._asdict().items()
         }
     )
@@ -227,7 +244,9 @@ def _loss_for_params(
         entropy,
         config.value_coef,
         config.entropy_coef,
-    ) + config.portfolio_entropy_coef * allocation_entropy
+        allocation_entropy,
+        config.portfolio_entropy_coef,
+    )
     metrics = PPOTrainMetrics(
         policy_loss=actor_loss,
         actor_loss=actor_loss,
@@ -386,7 +405,7 @@ def train_epoch(
 
 
 def train_ppo_on_split(
-    phi: Array,
+    market_vectors: Array,
     regime_probs: Array,
     asset_returns: Array,
     spy_returns: Array,
@@ -394,6 +413,9 @@ def train_ppo_on_split(
     env_config: EnvConfig,
     config: ProductionPPOConfig,
     rng: Array,
+    asset_embeddings: Array,
+    macro_states: Array,
+    spectral_states: Array,
     rollout_length: int | None = None,
     logger: TensorBoardLogger | None = None,
 ) -> ProductionPPOTrainingResult:
@@ -404,7 +426,7 @@ def train_ppo_on_split(
     rollout = collect_rollout(
         {"params": state.actor.params},
         {"params": state.critic.params},
-        phi,
+        market_vectors,
         regime_probs,
         asset_returns,
         spy_returns,
@@ -413,6 +435,9 @@ def train_ppo_on_split(
         config,
         rollout_key,
         rollout_length=rollout_length,
+        asset_embeddings=asset_embeddings,
+        macro_states=macro_states,
+        spectral_states=spectral_states,
     )
     update_batch = freeze_rollout_batch(rollout.batch, config, rollout.bootstrap_value)
     state, metrics = train_epoch(state, update_batch, train_key, logger)
@@ -425,13 +450,16 @@ def train_ppo_on_split(
 
 def evaluate_frozen_policy(
     train_state: ProductionPPOTrainState,
-    phi: Array,
+    market_vectors: Array,
     regime_probs: Array,
     asset_returns: Array,
     spy_returns: Array,
     initial_env_state: EnvState,
     env_config: EnvConfig,
     rng: Array,
+    asset_embeddings: Array,
+    macro_states: Array,
+    spectral_states: Array,
     rollout_length: int | None = None,
 ) -> ProductionPPOEvaluationResult:
     """Evaluate a frozen policy without updating params or optimizer state."""
@@ -439,7 +467,7 @@ def evaluate_frozen_policy(
     rollout = collect_rollout(
         {"params": train_state.actor.params},
         {"params": train_state.critic.params},
-        phi,
+        market_vectors,
         regime_probs,
         asset_returns,
         spy_returns,
@@ -448,6 +476,9 @@ def evaluate_frozen_policy(
         train_state.config,
         rng,
         rollout_length=rollout_length,
+        asset_embeddings=asset_embeddings,
+        macro_states=macro_states,
+        spectral_states=spectral_states,
         deterministic=True,
     )
     return ProductionPPOEvaluationResult(train_state=train_state, rollout=rollout)

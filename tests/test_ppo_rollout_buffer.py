@@ -9,11 +9,11 @@ from numpy.testing import assert_allclose
 from finrl.env.trading_env import EnvConfig, EnvState, environment_step
 from finrl.ppo import (
     PortfolioActorFlax,
-    PortfolioCriticFlax,
     ProductionPPOConfig,
     RolloutBatch,
     action_log_prob,
     collect_rollout,
+    initialize_ppo_train_state,
     make_minibatches,
     rollout_length,
     shuffle_rollout_indices,
@@ -35,14 +35,22 @@ def _config() -> ProductionPPOConfig:
     return ProductionPPOConfig(
         n_assets=3,
         n_regimes=2,
+        asset_latent_dim=4,
+        macro_dim=3,
+        spectral_dim=5,
         actor_hidden_dims=(8,),
         critic_hidden_dims=(8,),
         dirichlet_concentration=12.0,
     )
 
 
-def _arrays(n_steps: int = 4) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    phi = jnp.arange(n_steps * 32, dtype=jnp.float32).reshape(n_steps, 32) / 100.0
+def _arrays(n_steps: int = 4) -> tuple[jax.Array, ...]:
+    market_vectors = jnp.arange(n_steps * 64, dtype=jnp.float32).reshape(n_steps, 64) / 100.0
+    embeddings = (
+        jnp.arange(n_steps * 2 * 4, dtype=jnp.float32).reshape(n_steps, 2, 4) / 100.0
+    )
+    macro = jnp.ones((n_steps, 3), dtype=jnp.float32)
+    spectral = jnp.ones((n_steps, 5), dtype=jnp.float32)
     regimes = jnp.ones((n_steps, 2), dtype=jnp.float32) / 2.0
     returns = jnp.array(
         [
@@ -54,24 +62,25 @@ def _arrays(n_steps: int = 4) -> tuple[jax.Array, jax.Array, jax.Array, jax.Arra
         dtype=jnp.float32,
     )[:n_steps]
     spy = jnp.array([0.005, 0.004, -0.002, 0.01], dtype=jnp.float32)[:n_steps]
-    return phi, regimes, returns, spy
+    return market_vectors, embeddings, macro, spectral, regimes, returns, spy
 
 
 def _variables(config: ProductionPPOConfig) -> tuple[dict[str, object], dict[str, object]]:
-    state = jnp.ones((config.state_dim,), dtype=jnp.float32)
-    actor_variables = PortfolioActorFlax(config).init(jax.random.PRNGKey(0), state)
-    critic_variables = PortfolioCriticFlax(config).init(jax.random.PRNGKey(1), state)
-    return actor_variables, critic_variables
+    train_state = initialize_ppo_train_state(
+        jax.random.PRNGKey(10),
+        config,
+    )
+    return {"params": train_state.actor.params}, {"params": train_state.critic.params}
 
 
 def _collect(length: int = 4):
     config = _config()
     actor_variables, critic_variables = _variables(config)
-    phi, regimes, returns, spy = _arrays(length)
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays(length)
     buffer = collect_rollout(
         actor_variables,
         critic_variables,
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -79,6 +88,9 @@ def _collect(length: int = 4):
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(2),
+        asset_embeddings=embeddings,
+        macro_states=macro,
+        spectral_states=spectral,
     )
     return buffer, actor_variables, config, returns, spy
 
@@ -95,7 +107,7 @@ def test_collect_rollout_uses_environment_step_accounting() -> None:
     )
 
     assert rollout_length(buffer.batch) == 4
-    assert buffer.batch.states.shape == (4, config.state_dim)
+    assert buffer.batch.states.asset_embeddings.shape == (4, 2, 4)
     assert buffer.batch.actions.shape == (4, config.action_dim)
     assert_allclose(buffer.batch.dones, jnp.zeros((4,), dtype=jnp.float32))
     assert_allclose(
@@ -128,7 +140,7 @@ def test_rollout_stores_log_probs_from_collection_policy() -> None:
 def test_collect_rollout_is_jittable() -> None:
     config = _config()
     actor_variables, critic_variables = _variables(config)
-    phi, regimes, returns, spy = _arrays()
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays()
 
     rewards = jax.jit(
         lambda phi_arg, regime_arg, return_arg, spy_arg: collect_rollout(
@@ -142,11 +154,57 @@ def test_collect_rollout_is_jittable() -> None:
             EnvConfig(transaction_cost_rate=0.0),
             config,
             jax.random.PRNGKey(3),
+            asset_embeddings=embeddings,
+            macro_states=macro,
+            spectral_states=spectral,
         ).batch.rewards
-    )(phi, regimes, returns, spy)
+    )(market_vectors, regimes, returns, spy)
 
     assert rewards.shape == (4,)
     assert jnp.isfinite(rewards).all()
+
+
+def test_collect_rollout_supports_structured_states() -> None:
+    config = ProductionPPOConfig(
+        n_assets=3,
+        n_regimes=2,
+        asset_latent_dim=4,
+        macro_dim=3,
+        spectral_dim=5,
+        actor_hidden_dims=(8,),
+        critic_hidden_dims=(8,),
+    )
+    actor_variables, critic_variables = _variables(config)
+    market_vectors, embeddings, macro, spectral, regimes, returns, spy = _arrays()
+
+    buffer = collect_rollout(
+        actor_variables,
+        critic_variables,
+        market_vectors,
+        regimes,
+        returns,
+        spy,
+        _initial_state(config.action_dim),
+        EnvConfig(transaction_cost_rate=0.0),
+        config,
+        jax.random.PRNGKey(11),
+        asset_embeddings=embeddings,
+        macro_states=macro,
+        spectral_states=spectral,
+    )
+
+    assert buffer.batch.states.asset_embeddings.shape == (4, 2, 4)
+    assert buffer.batch.states.market_vector.shape == (4, 64)
+    assert buffer.batch.states.macro_state.shape == (4, 3)
+    assert buffer.batch.states.spectral_state.shape == (4, 5)
+    assert buffer.batch.actions.shape == (4, 3)
+    assert jnp.isfinite(buffer.batch.values).all()
+    assert_allclose(
+        jnp.sum(buffer.batch.actions, axis=-1),
+        jnp.ones((4,), dtype=jnp.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def _fake_batch(n_steps: int = 5) -> RolloutBatch:

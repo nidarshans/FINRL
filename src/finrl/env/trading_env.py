@@ -27,7 +27,12 @@ class EnvConfig(NamedTuple):
     transaction_cost_rate: float = 0.001
     drawdown_limit: float = 0.2
     drawdown_penalty: float = 1.0
+    drawdown_penalty_type: int = 0
+    drawdown_temp: float = 0.01
     turnover_penalty: float = 0.0
+    active_risk_penalty: float = 0.0
+    sortino_target_return: float = 0.0
+    sortino_downside_penalty: float = 0.0
     cash_index: int = -1
 
 
@@ -62,7 +67,11 @@ def environment_step(
 ) -> StepResult:
     """Rebalance to target weights, hold for one week, and update state."""
 
-    executed_weights = normalize_long_only_weights(target_weights)
+    executed_weights = normalize_long_only_weights(
+        target_weights,
+        fallback_weights=state.weights,
+        cash_index=config.cash_index,
+    )
     turnover = calculate_turnover(state.weights, executed_weights)
     transaction_cost = calculate_transaction_cost(
         turnover, config.transaction_cost_rate
@@ -75,7 +84,12 @@ def environment_step(
     reward_config = RewardConfig(
         drawdown_limit=config.drawdown_limit,
         drawdown_penalty=config.drawdown_penalty,
+        drawdown_penalty_type=config.drawdown_penalty_type,
+        drawdown_temp=config.drawdown_temp,
         turnover_penalty=config.turnover_penalty,
+        active_risk_penalty=config.active_risk_penalty,
+        sortino_target_return=config.sortino_target_return,
+        sortino_downside_penalty=config.sortino_downside_penalty,
     )
     reward = calculate_spy_relative_reward(
         net_return=net_return,

@@ -19,12 +19,15 @@ class ProductionPPOConfig:
     universe plus cash, use ``n_assets=101``.
     """
 
-    phi_dim: int = 32
+    phi_dim: int = 64
+    asset_latent_dim: int = 64
+    macro_dim: int = 16
+    spectral_dim: int = 20
     n_regimes: int = 4
     n_assets: int = 101
     actor_hidden_dims: tuple[int, int] = (128, 128)
     critic_hidden_dims: tuple[int, int] = (128, 64)
-    temperature: float = 1.0
+    temperature: float = 0.7
     dirichlet_concentration: float = 50.0
     min_concentration: float = 1e-3
     gamma: float = 0.99
@@ -35,7 +38,7 @@ class ProductionPPOConfig:
     entropy_coef: float = 0.0
     portfolio_entropy_coef: float = 0.0
     learning_rate: float = 1e-3
-    update_epochs: int = 4
+    update_epochs: int = 2
     minibatch_size: int = 64
     target_kl: float = 0.01
     max_grad_norm: float = 0.5
@@ -52,13 +55,22 @@ class ProductionPPOConfig:
 
     @property
     def state_dim(self) -> int:
-        """Return ``phi + regimes + weights + drawdown + previous turnover``."""
+        """Return explicit context plus previous portfolio dimensions."""
 
-        return self.phi_dim + self.n_regimes + self.action_dim + 2
+        return (
+            self.phi_dim
+            + self.macro_dim
+            + self.spectral_dim
+            + self.n_regimes
+            + self.action_dim
+            + 2
+        )
 
     def __post_init__(self) -> None:
         if self.phi_dim <= 0 or self.n_regimes <= 0 or self.n_assets <= 0:
             raise ValueError("PPO dimensions must be positive.")
+        if self.asset_latent_dim <= 0 or self.macro_dim <= 0 or self.spectral_dim <= 0:
+            raise ValueError("latent and context dimensions must be positive.")
         if not self.actor_hidden_dims or not self.critic_hidden_dims:
             raise ValueError("actor and critic hidden dimensions cannot be empty.")
         if any(hidden_dim <= 0 for hidden_dim in self.actor_hidden_dims):
@@ -100,52 +112,130 @@ class ProductionPortfolioAction(NamedTuple):
     entropy: Array
 
 
+class PPOState(NamedTuple):
+    """Structured per-asset PPO state.
+
+    ``asset_embeddings`` excludes cash and has shape ``[n_assets - 1, D]``.
+    ``prev_weights`` includes cash and has shape ``[n_assets]``.
+    """
+
+    asset_embeddings: Array
+    market_vector: Array
+    macro_state: Array
+    spectral_state: Array
+    regime_probs: Array
+    prev_weights: Array
+    drawdown: Array
+    prev_turnover: Array
+
+
 class PortfolioActorFlax(nn.Module):
-    """Flax actor that maps PPO state vectors to allocation logits."""
+    """Context-aware shared per-asset allocation scorer."""
 
     config: ProductionPPOConfig
 
     @nn.compact
-    def __call__(self, state: Array) -> Array:
+    def __call__(self, state: PPOState) -> Array:
         """Return logits for `N + 1` tradable assets."""
 
-        x = state
+        n_risky_assets = self.config.n_assets - 1
+        context = build_allocation_context(
+            state.market_vector,
+            state.macro_state,
+            state.spectral_state,
+            state.regime_probs,
+            state.drawdown,
+            state.prev_turnover,
+        )
+        repeated_context = jnp.broadcast_to(context, (n_risky_assets, context.shape[-1]))
+        asset_prev_weights = state.prev_weights[:n_risky_assets, None]
+        asset_inputs = jnp.concatenate(
+            [
+                state.asset_embeddings,
+                repeated_context,
+                asset_prev_weights,
+            ],
+            axis=-1,
+        )
+        x = asset_inputs
         for index, hidden_dim in enumerate(self.config.actor_hidden_dims):
-            x = nn.Dense(hidden_dim, name=f"hidden_{index}")(x)
+            x = nn.Dense(hidden_dim, name=f"shared_asset_hidden_{index}")(x)
             x = jnp.tanh(x)
-        return nn.Dense(self.config.n_assets, name="logits")(x)
+        asset_scores = nn.Dense(1, name="shared_asset_score")(x).squeeze(axis=-1)
+
+        cash_input = jnp.concatenate(
+            [
+                context,
+                jnp.atleast_1d(state.prev_weights[-1]),
+            ],
+            axis=-1,
+        )
+        cash = cash_input
+        for index, hidden_dim in enumerate(self.config.actor_hidden_dims):
+            cash = nn.Dense(hidden_dim, name=f"cash_hidden_{index}")(cash)
+            cash = jnp.tanh(cash)
+        cash_score = nn.Dense(1, name="cash_score")(cash).squeeze(axis=-1)
+        return jnp.concatenate([asset_scores, jnp.atleast_1d(cash_score)], axis=-1)
 
 
 def actor_mean_weights(logits: Array, config: ProductionPPOConfig) -> Array:
-    """Return deterministic mean allocation for evaluation."""
+    """Return deterministic Dirichlet mean allocation for evaluation."""
 
-    return nn.softmax(logits / config.temperature, axis=-1)
+    base = nn.softmax(logits / config.temperature, axis=-1)
+    alpha = config.dirichlet_concentration * base + config.min_concentration
+    return alpha / jnp.sum(alpha, axis=-1, keepdims=True)
 
 
-def build_ppo_state(
-    phi: Array,
+def build_structured_ppo_state(
+    asset_embeddings: Array,
+    market_vector: Array,
+    macro_state: Array,
+    spectral_state: Array,
     regime_probs: Array,
-    weights: Array,
+    prev_weights: Array,
+    drawdown: Array,
+    previous_turnover: Array,
+) -> PPOState:
+    """Build structured per-asset PPO state from market and portfolio context."""
+
+    return PPOState(
+        asset_embeddings=jnp.asarray(asset_embeddings, dtype=jnp.float32),
+        market_vector=jnp.asarray(market_vector, dtype=jnp.float32),
+        macro_state=jnp.asarray(macro_state, dtype=jnp.float32),
+        spectral_state=jnp.asarray(spectral_state, dtype=jnp.float32),
+        regime_probs=jnp.asarray(regime_probs, dtype=jnp.float32),
+        prev_weights=jnp.asarray(prev_weights, dtype=jnp.float32),
+        drawdown=jnp.asarray(drawdown, dtype=jnp.float32),
+        prev_turnover=jnp.asarray(previous_turnover, dtype=jnp.float32),
+    )
+
+
+def build_allocation_context(
+    market_vector: Array,
+    macro_state: Array,
+    spectral_state: Array,
+    regime_probs: Array,
     drawdown: Array,
     previous_turnover: Array,
 ) -> Array:
-    """Build production PPO state from market, regime, and portfolio context."""
+    """Concatenate the global allocation context from the architecture diagram."""
 
     return jnp.concatenate(
         [
-            jnp.asarray(phi, dtype=jnp.float32),
+            jnp.asarray(market_vector, dtype=jnp.float32),
+            jnp.asarray(macro_state, dtype=jnp.float32),
+            jnp.asarray(spectral_state, dtype=jnp.float32),
             jnp.asarray(regime_probs, dtype=jnp.float32),
-            jnp.asarray(weights, dtype=jnp.float32),
             jnp.atleast_1d(jnp.asarray(drawdown, dtype=jnp.float32)),
             jnp.atleast_1d(jnp.asarray(previous_turnover, dtype=jnp.float32)),
         ],
-        axis=0,
+        axis=-1,
     )
 
 
 def sample_action(
     variables: dict[str, object],
-    state: Array,
+    state: PPOState,
     rng: Array,
     config: ProductionPPOConfig,
     deterministic: bool = False,

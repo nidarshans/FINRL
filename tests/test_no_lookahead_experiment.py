@@ -30,8 +30,11 @@ def test_train_fitted_artifacts_match_each_split_train_window() -> None:
         assert artifacts.fitted_hmm.metadata.train_window is not None
         assert artifacts.fitted_hmm.metadata.train_window.start == split.train_start
         assert artifacts.fitted_hmm.metadata.train_window.end == split.train_end
-        assert artifacts.policy_checkpoint is not None
-        assert artifacts.policy_checkpoint.train_window == artifacts.preprocessor.fit_window
+        assert artifacts.production_policy_state is not None
+        assert artifacts.production_ppo_training is not None
+        assert artifacts.production_ppo_training.rollout.batch.rewards.shape[0] == len(
+            artifacts.train_windows.decision_dates
+        )
 
 
 def test_run_split_reuses_frozen_artifacts_for_test_evaluation() -> None:
@@ -41,9 +44,8 @@ def test_run_split_reuses_frozen_artifacts_for_test_evaluation() -> None:
 
     run = run_split(split, data, config, split_index=0)
 
-    assert run.artifacts.policy_checkpoint is not None
+    assert run.artifacts.production_policy_state is not None
     assert run.result.test_start == split.test_start
     assert run.result.test_end == split.test_end
     assert run.result.portfolio_returns.height == len(run.artifacts.test_windows.decision_dates)
     assert run.result.spy_returns.height == run.result.portfolio_returns.height
-

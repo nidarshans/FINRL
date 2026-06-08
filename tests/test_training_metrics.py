@@ -90,7 +90,10 @@ def test_ppo_metrics_are_finite_scalar_diagnostics() -> None:
         learning_rate=1e-3,
         dirichlet_concentration=12.0,
     )
-    phi = jnp.arange(3 * 32, dtype=jnp.float32).reshape(3, 32) / 100.0
+    market_vectors = jnp.arange(3 * 64, dtype=jnp.float32).reshape(3, 64) / 100.0
+    embeddings = jnp.ones((3, 2, 64), dtype=jnp.float32)
+    macro = jnp.ones((3, 16), dtype=jnp.float32)
+    spectral = jnp.ones((3, 20), dtype=jnp.float32)
     regimes = jnp.ones((3, 2), dtype=jnp.float32) / 2.0
     returns = jnp.array(
         [[0.01, 0.0, 0.0001], [0.0, 0.02, 0.0001], [-0.01, 0.01, 0.0001]],
@@ -99,7 +102,7 @@ def test_ppo_metrics_are_finite_scalar_diagnostics() -> None:
     spy = jnp.array([0.005, 0.004, -0.002], dtype=jnp.float32)
 
     result = train_flax_ppo_on_split(
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -107,6 +110,9 @@ def test_ppo_metrics_are_finite_scalar_diagnostics() -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(0),
+        embeddings,
+        macro,
+        spectral,
     )
 
     metrics = ppo_metrics_to_dict(result.metrics)
@@ -141,8 +147,6 @@ def test_encoder_training_logging_can_be_disabled() -> None:
         asset_hidden_dim=8,
         macro_hidden_dim=4,
         attention_heads=2,
-        fusion_hidden_dim=12,
-        output_dim=6,
     )
 
     result = fit_encoder_on_train_split(

@@ -73,4 +73,3 @@ def test_production_train_artifacts_record_split_train_window_only() -> None:
     assert artifacts.fitted_hmm.metadata.train_window.start == split.train_start
     assert artifacts.fitted_hmm.metadata.train_window.end == split.train_end
     assert artifacts.production_policy_state is not None
-    assert artifacts.policy_checkpoint is None

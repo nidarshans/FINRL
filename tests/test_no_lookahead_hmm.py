@@ -15,7 +15,7 @@ RTOL = 1e-6
 ATOL = 1e-8
 
 
-def _train_phi() -> np.ndarray:
+def _train_market_vectors() -> np.ndarray:
     return np.array(
         [
             [-1.5, -1.0],
@@ -33,7 +33,7 @@ def _train_phi() -> np.ndarray:
 
 
 def test_filtering_probabilities_do_not_change_when_future_observations_change() -> None:
-    fitted = fit_hmm(_train_phi(), HMMConfig(n_states=3, max_iter=5))
+    fitted = fit_hmm(_train_market_vectors(), HMMConfig(n_states=3, max_iter=5))
     base = np.array(
         [
             [-1.0, -0.7],
@@ -52,10 +52,10 @@ def test_filtering_probabilities_do_not_change_when_future_observations_change()
     assert_allclose(base_probs[:3], changed_probs[:3], rtol=RTOL, atol=ATOL)
 
 
-def test_hmm_fit_api_accepts_train_phi_only_for_observations() -> None:
+def test_hmm_fit_api_accepts_train_market_vectors_only_for_observations() -> None:
     signature = inspect.signature(fit_hmm)
 
-    assert tuple(signature.parameters) == ("train_phi", "config")
+    assert tuple(signature.parameters) == ("train_market_vectors", "config")
 
 
 def test_hmm_evaluation_uses_explicit_forward_filter_not_smoothing_api() -> None:
@@ -76,7 +76,7 @@ def test_hmm_training_uses_hmmlearn_not_local_em() -> None:
 
 
 def test_fitting_does_not_depend_on_heldout_future_values() -> None:
-    train = _train_phi()
+    train = _train_market_vectors()
     future = np.full((3, 2), 9_999.0, dtype=np.float64)
 
     train_only = fit_hmm(train, HMMConfig(n_states=3, max_iter=5))

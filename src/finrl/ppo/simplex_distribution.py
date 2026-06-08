@@ -38,7 +38,13 @@ class DirichletPortfolioDistribution:
     config: ProductionPPOConfig
 
     def mean(self) -> Array:
-        """Return deterministic evaluation allocation on the simplex."""
+        """Return deterministic Dirichlet mean allocation on the simplex."""
+
+        alpha = self.concentration()
+        return alpha / jnp.sum(alpha, axis=-1, keepdims=True)
+
+    def base_weights(self) -> Array:
+        """Return temperature-scaled softmax weights before concentration floor."""
 
         return jax.nn.softmax(self.logits / self.config.temperature, axis=-1)
 
@@ -46,7 +52,7 @@ class DirichletPortfolioDistribution:
         """Return positive Dirichlet concentration parameters."""
 
         return (
-            self.config.dirichlet_concentration * self.mean()
+            self.config.dirichlet_concentration * self.base_weights()
             + self.config.min_concentration
         )
 

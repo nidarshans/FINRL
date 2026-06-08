@@ -24,8 +24,6 @@ def test_future_window_changes_do_not_change_prior_flax_encoding() -> None:
         asset_hidden_dim=8,
         macro_hidden_dim=4,
         attention_heads=2,
-        fusion_hidden_dim=10,
-        output_dim=6,
     )
     variables = init_encoder_variables(jax.random.PRNGKey(0), config)
     asset = jnp.arange(2 * 4 * 3 * 2, dtype=jnp.float32).reshape(2, 4, 3, 2) / 100.0

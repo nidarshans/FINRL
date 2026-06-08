@@ -19,8 +19,8 @@ from finrl.experiments import (
 )
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.features.schema import FeatureBundle
-from finrl.models.encoder import EncoderConfig
-from finrl.ppo.policy import PPOConfig
+from finrl.models.flax_encoder import ProductionEncoderConfig
+from finrl.ppo.flax_policy import ProductionPPOConfig
 from finrl.regimes.schema import HMMConfig
 
 
@@ -97,15 +97,30 @@ def synthetic_experiment_config(enable_ppo: bool = False) -> ExperimentConfig:
     return ExperimentConfig(
         walk_forward=WalkForwardConfig(train_years=1, test_years=1, step_years=1),
         preprocessing=PreprocessingConfig(rolling_window=2),
-        encoder=EncoderConfig(
+        production_encoder=ProductionEncoderConfig(
             lookback=3,
             n_assets=2,
             asset_feature_dim=2,
             macro_feature_dim=1,
             spectral_feature_dim=20,
+            asset_hidden_dim=8,
+            macro_hidden_dim=4,
+            attention_heads=2,
         ),
         hmm=HMMConfig(n_states=2, max_iter=5),
-        ppo=PPOConfig(n_assets=3, train_epochs=1, learning_rate=1e-4),
+        production_ppo=ProductionPPOConfig(
+            phi_dim=8,
+            asset_latent_dim=8,
+            macro_dim=4,
+            spectral_dim=20,
+            n_regimes=2,
+            n_assets=3,
+            actor_hidden_dims=(8,),
+            critic_hidden_dims=(8,),
+            update_epochs=1,
+            minibatch_size=2,
+            learning_rate=1e-4,
+        ),
         enable_ppo=enable_ppo,
         seed=7,
         periods_per_year=6,

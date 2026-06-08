@@ -106,6 +106,6 @@ def test_weekly_rebalance_uses_current_weights_before_rebalance() -> None:
         EnvConfig(transaction_cost_rate=0.001),
     )
 
-    assert_allclose(result.turnover, 1.60, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.transaction_cost, 0.00160, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.net_return, -0.00160, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 0.80, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.transaction_cost, 0.00080, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.net_return, -0.00080, rtol=RTOL, atol=ATOL)

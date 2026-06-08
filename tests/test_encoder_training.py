@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +16,6 @@ from finrl.models import (
     make_encoder_batches,
     train_encoder_epoch,
 )
-from finrl.models.checkpoints import load_encoder_checkpoint, save_encoder_checkpoint
 from finrl.models.windows import LookbackWindows
 
 
@@ -54,8 +51,6 @@ def _encoder_config() -> ProductionEncoderConfig:
         asset_hidden_dim=8,
         macro_hidden_dim=4,
         attention_heads=2,
-        fusion_hidden_dim=12,
-        output_dim=6,
     )
 
 
@@ -166,20 +161,3 @@ def test_fit_encoder_on_train_split_returns_epoch_metrics() -> None:
     assert result.train_state.step > 0
     assert len(result.metrics_by_epoch) == 2
     assert all(np.isfinite(metrics["loss"]) for metrics in result.metrics_by_epoch)
-
-
-def test_encoder_checkpoint_round_trip_preserves_params(tmp_path: Path) -> None:
-    state = init_encoder_pretraining_state(
-        jax.random.PRNGKey(3),
-        _encoder_config(),
-        EncoderTrainingConfig(batch_size=2),
-    )
-    path = tmp_path / "encoder.pkl"
-
-    save_encoder_checkpoint(state.params, path)
-    loaded = load_encoder_checkpoint(path)
-
-    original_leaves = jax.tree.leaves(state.params)
-    loaded_leaves = jax.tree.leaves(loaded)
-    for original, restored in zip(original_leaves, loaded_leaves):
-        assert_allclose(original, restored)

@@ -10,9 +10,9 @@ import jax.numpy as jnp
 
 from finrl.env.trading_env import EnvConfig, EnvState, StepResult, environment_step
 from finrl.ppo.flax_policy import (
-    PortfolioActorFlax,
+    PPOState,
     ProductionPPOConfig,
-    build_ppo_state,
+    build_structured_ppo_state,
     sample_action,
 )
 from finrl.ppo.flax_value import PortfolioCriticFlax
@@ -22,7 +22,7 @@ from finrl.types import Array
 class RolloutBatch(NamedTuple):
     """Frozen rollout tensors with a shared leading time dimension."""
 
-    states: Array
+    states: Array | PPOState
     actions: Array
     old_log_probs: Array
     rewards: Array
@@ -47,20 +47,23 @@ class RolloutBuffer:
 
 
 def _validate_rollout_inputs(
-    phi: Array,
+    market_vectors: Array,
     regime_probs: Array,
     asset_returns: Array,
     spy_returns: Array,
     initial_env_state: EnvState,
     config: ProductionPPOConfig,
     rollout_length: int,
+    asset_embeddings: Array,
+    macro_states: Array,
+    spectral_states: Array,
 ) -> None:
     if rollout_length <= 0:
         raise ValueError("rollout_length must be positive.")
-    if rollout_length > phi.shape[0]:
+    if rollout_length > market_vectors.shape[0]:
         raise ValueError("rollout_length cannot exceed available timesteps.")
-    if phi.shape[-1] != config.phi_dim:
-        raise ValueError("phi dimension does not match ProductionPPOConfig.")
+    if market_vectors.shape[-1] != config.phi_dim:
+        raise ValueError("market vector dimension does not match ProductionPPOConfig.")
     if regime_probs.shape[0] < rollout_length:
         raise ValueError("regime_probs length is shorter than rollout_length.")
     if regime_probs.shape[-1] != config.n_regimes:
@@ -73,12 +76,20 @@ def _validate_rollout_inputs(
         raise ValueError("spy_returns length is shorter than rollout_length.")
     if initial_env_state.weights.shape != (config.action_dim,):
         raise ValueError("initial_env_state weights must match action dimension.")
+    if asset_embeddings.shape[0] < rollout_length:
+        raise ValueError("asset_embeddings length is shorter than rollout_length.")
+    if asset_embeddings.shape[1:] != (config.action_dim - 1, config.asset_latent_dim):
+        raise ValueError("asset_embeddings shape must be [T, n_assets - 1, latent_dim].")
+    if macro_states.shape[0] < rollout_length or macro_states.shape[-1] != config.macro_dim:
+        raise ValueError("macro_states shape must be [T, macro_dim].")
+    if spectral_states.shape[0] < rollout_length or spectral_states.shape[-1] != config.spectral_dim:
+        raise ValueError("spectral_states shape must be [T, spectral_dim].")
 
 
 def collect_rollout(
     actor_variables: dict[str, object],
     critic_variables: dict[str, object],
-    phi: Array,
+    market_vectors: Array,
     regime_probs: Array,
     asset_returns: Array,
     spy_returns: Array,
@@ -86,48 +97,54 @@ def collect_rollout(
     env_config: EnvConfig,
     ppo_config: ProductionPPOConfig,
     rng: Array,
+    asset_embeddings: Array,
+    macro_states: Array,
+    spectral_states: Array,
     rollout_length: int | None = None,
     deterministic: bool = False,
-    bootstrap_phi: Array | None = None,
+    bootstrap_market_vector: Array | None = None,
     bootstrap_regime_probs: Array | None = None,
+    bootstrap_asset_embeddings: Array | None = None,
+    bootstrap_macro_state: Array | None = None,
+    bootstrap_spectral_state: Array | None = None,
     terminal: bool = False,
 ) -> RolloutBuffer:
     """Collect one production rollout using the existing environment step."""
 
-    length = phi.shape[0] if rollout_length is None else rollout_length
+    length = market_vectors.shape[0] if rollout_length is None else rollout_length
     _validate_rollout_inputs(
-        phi,
+        market_vectors,
         regime_probs,
         asset_returns,
         spy_returns,
         initial_env_state,
         ppo_config,
         length,
+        asset_embeddings,
+        macro_states,
+        spectral_states,
     )
-    if (bootstrap_phi is None) != (bootstrap_regime_probs is None):
+    if (bootstrap_market_vector is None) != (bootstrap_regime_probs is None):
         raise ValueError(
-            "bootstrap_phi and bootstrap_regime_probs must be provided together."
+            "bootstrap_market_vector and bootstrap_regime_probs must be provided together."
         )
-    phi = phi[:length]
+    market_vectors = market_vectors[:length]
     regime_probs = regime_probs[:length]
+    asset_embeddings = asset_embeddings[:length]
+    macro_states = macro_states[:length]
+    spectral_states = spectral_states[:length]
     asset_returns = asset_returns[:length]
     spy_returns = spy_returns[:length]
     critic = PortfolioCriticFlax(ppo_config)
 
-    def step_fn(
-        carry: tuple[EnvState, Array],
-        inputs: tuple[Array, Array, Array, Array],
-    ) -> tuple[tuple[EnvState, Array], tuple[Array, Array, Array, Array, Array, StepResult]]:
-        env_state, key = carry
-        phi_t, regime_t, returns_t, spy_t = inputs
+    def run_step(
+        env_state: EnvState,
+        key: Array,
+        state_t: Array | PPOState,
+        returns_t: Array,
+        spy_t: Array,
+    ) -> tuple[EnvState, Array, tuple[Array | PPOState, Array, Array, Array, Array, Array, StepResult]]:
         key, action_key = jax.random.split(key)
-        state_t = build_ppo_state(
-            phi_t,
-            regime_t,
-            env_state.weights,
-            env_state.drawdown,
-            env_state.previous_turnover,
-        )
         action = sample_action(
             actor_variables,
             state_t,
@@ -137,7 +154,7 @@ def collect_rollout(
         )
         value_t = critic.apply(critic_variables, state_t)
         result = environment_step(env_state, action.weights, returns_t, spy_t, env_config)
-        return (result.state, key), (
+        return result.state, key, (
             state_t,
             action.weights,
             action.log_prob,
@@ -147,20 +164,64 @@ def collect_rollout(
             result,
         )
 
+    def step_fn(
+        carry: tuple[EnvState, Array],
+        inputs: tuple[Array, Array, Array, Array, Array, Array, Array],
+    ) -> tuple[tuple[EnvState, Array], tuple[PPOState, Array, Array, Array, Array, StepResult]]:
+        env_state, key = carry
+        embedding_t, market_vector_t, macro_t, spectral_t, regime_t, returns_t, spy_t = inputs
+        state_t = build_structured_ppo_state(
+            asset_embeddings=embedding_t,
+            market_vector=market_vector_t,
+            macro_state=macro_t,
+            spectral_state=spectral_t,
+            regime_probs=regime_t,
+            prev_weights=env_state.weights,
+            drawdown=env_state.drawdown,
+            previous_turnover=env_state.previous_turnover,
+        )
+        next_env_state, next_key, output = run_step(
+            env_state,
+            key,
+            state_t,
+            returns_t,
+            spy_t,
+        )
+        return (next_env_state, next_key), output
+
     (final_env_state, _), outputs = jax.lax.scan(
         step_fn,
         (initial_env_state, rng),
-        (phi, regime_probs, asset_returns, spy_returns),
+        (
+            asset_embeddings,
+            market_vectors,
+            macro_states,
+            spectral_states,
+            regime_probs,
+            asset_returns,
+            spy_returns,
+        ),
     )
     states, actions, old_log_probs, rewards, values, entropies, step_results = outputs
-    has_bootstrap = bootstrap_phi is not None and bootstrap_regime_probs is not None
+    has_bootstrap = (
+        bootstrap_market_vector is not None and bootstrap_regime_probs is not None
+    )
     if has_bootstrap:
-        bootstrap_state = build_ppo_state(
-            jnp.asarray(bootstrap_phi, dtype=jnp.float32),
-            jnp.asarray(bootstrap_regime_probs, dtype=jnp.float32),
-            final_env_state.weights,
-            final_env_state.drawdown,
-            final_env_state.previous_turnover,
+        if (
+            bootstrap_asset_embeddings is None
+            or bootstrap_macro_state is None
+            or bootstrap_spectral_state is None
+        ):
+            raise ValueError("structured bootstrap state components are required.")
+        bootstrap_state = build_structured_ppo_state(
+            asset_embeddings=jnp.asarray(bootstrap_asset_embeddings, dtype=jnp.float32),
+            market_vector=jnp.asarray(bootstrap_market_vector, dtype=jnp.float32),
+            macro_state=jnp.asarray(bootstrap_macro_state, dtype=jnp.float32),
+            spectral_state=jnp.asarray(bootstrap_spectral_state, dtype=jnp.float32),
+            regime_probs=jnp.asarray(bootstrap_regime_probs, dtype=jnp.float32),
+            prev_weights=final_env_state.weights,
+            drawdown=final_env_state.drawdown,
+            previous_turnover=final_env_state.previous_turnover,
         )
         bootstrap_value = critic.apply(critic_variables, bootstrap_state)
     else:

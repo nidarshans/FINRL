@@ -20,7 +20,8 @@ def validate_rollout_batch(batch: RolloutBatch) -> None:
 
     length = rollout_length(batch)
     for name, value in batch._asdict().items():
-        if value.shape[0] != length:
+        leaves = jax.tree_util.tree_leaves(value)
+        if any(leaf.shape[0] != length for leaf in leaves):
             raise ValueError(f"{name} leading dimension does not match rewards.")
 
 
@@ -35,7 +36,7 @@ def shuffle_rollout_indices(rng: Array, n_steps: int) -> Array:
 def _take_batch(batch: RolloutBatch, indices: Array) -> RolloutBatch:
     return RolloutBatch(
         **{
-            name: value[indices]
+            name: jax.tree_util.tree_map(lambda leaf: leaf[indices], value)
             for name, value in batch._asdict().items()
         }
     )

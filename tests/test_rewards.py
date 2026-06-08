@@ -65,8 +65,12 @@ def test_reward_handles_spy_down_period() -> None:
     assert bool(reward > 0.0)
 
 
-def test_drawdown_penalty_is_zero_below_threshold() -> None:
-    config = RewardConfig(drawdown_limit=0.2, drawdown_penalty=5.0)
+def test_hinge_drawdown_penalty_is_zero_below_threshold() -> None:
+    config = RewardConfig(
+        drawdown_limit=0.2,
+        drawdown_penalty=5.0,
+        drawdown_penalty_type="hinge",
+    )
 
     reward = calculate_spy_relative_reward(
         net_return=jnp.array(0.0, dtype=jnp.float32),
@@ -79,8 +83,12 @@ def test_drawdown_penalty_is_zero_below_threshold() -> None:
     assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
 
 
-def test_drawdown_penalty_is_positive_above_threshold() -> None:
-    config = RewardConfig(drawdown_limit=0.2, drawdown_penalty=5.0)
+def test_hinge_drawdown_penalty_is_positive_above_threshold() -> None:
+    config = RewardConfig(
+        drawdown_limit=0.2,
+        drawdown_penalty=5.0,
+        drawdown_penalty_type="hinge",
+    )
 
     reward = calculate_spy_relative_reward(
         net_return=jnp.array(0.0, dtype=jnp.float32),
@@ -112,6 +120,120 @@ def test_turnover_penalty_scales_linearly() -> None:
     )
 
     assert_allclose(high_turnover_reward - low_turnover_reward, -0.1, rtol=RTOL, atol=ATOL)
+
+
+def test_default_reward_turnover_penalty_is_only_net_return_effect() -> None:
+    config = RewardConfig()
+
+    reward_low = calculate_spy_relative_reward(
+        net_return=jnp.array(0.01, dtype=jnp.float32),
+        spy_return=jnp.array(0.0, dtype=jnp.float32),
+        drawdown=jnp.array(0.0, dtype=jnp.float32),
+        turnover=jnp.array(0.1, dtype=jnp.float32),
+        config=config,
+    )
+    reward_high = calculate_spy_relative_reward(
+        net_return=jnp.array(0.01, dtype=jnp.float32),
+        spy_return=jnp.array(0.0, dtype=jnp.float32),
+        drawdown=jnp.array(0.0, dtype=jnp.float32),
+        turnover=jnp.array(0.9, dtype=jnp.float32),
+        config=config,
+    )
+
+    assert_allclose(reward_low, reward_high, rtol=RTOL, atol=ATOL)
+
+
+def test_smooth_drawdown_penalty_is_finite_and_monotonic() -> None:
+    config = RewardConfig(
+        drawdown_limit=0.2,
+        drawdown_penalty=1.0,
+        drawdown_penalty_type="smooth",
+        drawdown_temp=0.01,
+    )
+
+    below = calculate_spy_relative_reward(
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.1, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        config,
+    )
+    above = calculate_spy_relative_reward(
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.25, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        config,
+    )
+
+    assert bool(jnp.isfinite(below))
+    assert bool(jnp.isfinite(above))
+    assert bool(below > above)
+    assert bool(jnp.abs(below) < 1e-4)
+
+
+def test_active_risk_penalty_is_optional() -> None:
+    base = calculate_spy_relative_reward(
+        jnp.array(0.03, dtype=jnp.float32),
+        jnp.array(0.01, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        RewardConfig(active_risk_penalty=0.0),
+    )
+    penalized = calculate_spy_relative_reward(
+        jnp.array(0.03, dtype=jnp.float32),
+        jnp.array(0.01, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        RewardConfig(active_risk_penalty=10.0),
+    )
+
+    assert bool(penalized < base)
+    assert bool(jnp.isfinite(penalized))
+
+
+def test_sortino_downside_penalty_ignores_upside_returns() -> None:
+    config = RewardConfig(
+        sortino_target_return=0.0,
+        sortino_downside_penalty=25.0,
+    )
+
+    reward = calculate_spy_relative_reward(
+        jnp.array(0.02, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        config,
+    )
+    expected = np.log1p(0.02)
+
+    assert_allclose(reward, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_sortino_downside_penalty_scales_with_squared_shortfall() -> None:
+    base_config = RewardConfig(sortino_downside_penalty=0.0)
+    sortino_config = RewardConfig(
+        sortino_target_return=0.0,
+        sortino_downside_penalty=25.0,
+    )
+
+    base = calculate_spy_relative_reward(
+        jnp.array(-0.02, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        base_config,
+    )
+    penalized = calculate_spy_relative_reward(
+        jnp.array(-0.02, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        sortino_config,
+    )
+
+    assert_allclose(penalized - base, -25.0 * 0.02**2, rtol=RTOL, atol=ATOL)
+    assert bool(jnp.isfinite(penalized))
 
 
 def test_reward_can_use_alternate_callable() -> None:

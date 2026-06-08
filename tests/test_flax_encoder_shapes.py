@@ -11,10 +11,12 @@ from finrl.models import (
     AssetLSTMEncoder,
     AttentionPool,
     CrossAssetSelfAttention,
+    EncoderTrainingConfig,
     MacroLSTMEncoder,
     ProductionEncoderConfig,
     encode_market_state_flax,
-    init_encoder_train_state,
+    encode_market_state_with_latents_flax,
+    init_encoder_pretraining_state,
     init_encoder_variables,
 )
 
@@ -28,8 +30,6 @@ def _tiny_config() -> ProductionEncoderConfig:
         asset_hidden_dim=8,
         macro_hidden_dim=6,
         attention_heads=2,
-        fusion_hidden_dim=10,
-        output_dim=7,
     )
 
 
@@ -65,7 +65,7 @@ def test_flax_encoder_component_shapes_match_architecture() -> None:
     assert jnp.isfinite(macro_embedding).all()
 
 
-def test_market_encoder_outputs_phi_under_jit() -> None:
+def test_market_encoder_outputs_market_vector_under_jit() -> None:
     config = _tiny_config()
     variables = init_encoder_variables(jax.random.PRNGKey(4), config)
     asset_window = jnp.ones((5, 4, 3), dtype=jnp.float32)
@@ -81,10 +81,35 @@ def test_market_encoder_outputs_phi_under_jit() -> None:
             config,
         )
     )
-    phi = apply_encoder(asset_window, macro_window, spectral_row)
+    market_vector = apply_encoder(asset_window, macro_window, spectral_row)
 
-    assert phi.shape == (7,)
-    assert jnp.isfinite(phi).all()
+    assert market_vector.shape == (8,)
+    assert jnp.isfinite(market_vector).all()
+
+
+def test_market_encoder_exposes_asset_latents_under_jit() -> None:
+    config = _tiny_config()
+    variables = init_encoder_variables(jax.random.PRNGKey(40), config)
+    asset_window = jnp.arange(5 * 4 * 3, dtype=jnp.float32).reshape(5, 4, 3) / 100.0
+    macro_window = jnp.ones((5, 2), dtype=jnp.float32)
+    spectral_row = jnp.linspace(-1.0, 1.0, 20, dtype=jnp.float32)
+
+    output = jax.jit(
+        lambda asset, macro, spectral: encode_market_state_with_latents_flax(
+            variables,
+            asset,
+            macro,
+            spectral,
+            config,
+        )
+    )(asset_window, macro_window, spectral_row)
+
+    assert output.asset_embeddings.shape == (4, 8)
+    assert output.market_vector.shape == (8,)
+    assert output.macro_state.shape == (6,)
+    assert output.spectral_state.shape == (20,)
+    assert jnp.isfinite(output.asset_embeddings).all()
+    assert jnp.isfinite(output.market_vector).all()
 
 
 def test_market_encoder_supports_vmap_over_windows() -> None:
@@ -104,7 +129,7 @@ def test_market_encoder_supports_vmap_over_windows() -> None:
         )
     )(asset, macro, spectral)
 
-    assert vmapped.shape == (2, 7)
+    assert vmapped.shape == (2, 8)
     assert jnp.isfinite(vmapped).all()
 
 
@@ -145,14 +170,15 @@ def test_asset_hidden_dim_must_match_attention_heads() -> None:
         ProductionEncoderConfig(asset_hidden_dim=10, attention_heads=4)
 
 
-def test_init_encoder_train_state_wraps_flax_params_with_optax() -> None:
+def test_init_encoder_pretraining_state_wraps_flax_params_with_optax() -> None:
     config = _tiny_config()
-    train_state = init_encoder_train_state(
+    train_state = init_encoder_pretraining_state(
         jax.random.PRNGKey(7),
         config,
-        learning_rate=1e-3,
+        EncoderTrainingConfig(learning_rate=1e-3),
     )
 
     assert train_state.step == 0
-    assert "asset_lstm_encoder" in train_state.params
-    assert "cross_asset_attention" in train_state.params
+    assert "asset_lstm_encoder" in train_state.params["encoder"]
+    assert "cross_asset_attention" in train_state.params["encoder"]
+    assert "heads" in train_state.params

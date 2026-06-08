@@ -34,6 +34,9 @@ def test_training_rollout_length_excludes_test_observations() -> None:
     config = ProductionPPOConfig(
         n_assets=3,
         n_regimes=2,
+        asset_latent_dim=4,
+        macro_dim=3,
+        spectral_dim=5,
         actor_hidden_dims=(8,),
         critic_hidden_dims=(8,),
         update_epochs=1,
@@ -42,7 +45,12 @@ def test_training_rollout_length_excludes_test_observations() -> None:
     )
     n_steps = 5
     train_steps = 3
-    phi = jnp.arange(n_steps * 32, dtype=jnp.float32).reshape(n_steps, 32) / 100.0
+    market_vectors = jnp.arange(n_steps * 64, dtype=jnp.float32).reshape(n_steps, 64) / 100.0
+    embeddings = (
+        jnp.arange(n_steps * 2 * 4, dtype=jnp.float32).reshape(n_steps, 2, 4) / 100.0
+    )
+    macro = jnp.ones((n_steps, 3), dtype=jnp.float32)
+    spectral = jnp.ones((n_steps, 5), dtype=jnp.float32)
     regimes = jnp.ones((n_steps, 2), dtype=jnp.float32) / 2.0
     returns = jnp.array(
         [
@@ -57,7 +65,7 @@ def test_training_rollout_length_excludes_test_observations() -> None:
     spy = jnp.array([0.005, 0.004, -0.002, 0.9, -0.9], dtype=jnp.float32)
 
     baseline = train_flax_ppo_on_split(
-        phi,
+        market_vectors,
         regimes,
         returns,
         spy,
@@ -65,10 +73,13 @@ def test_training_rollout_length_excludes_test_observations() -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(0),
+        embeddings,
+        macro,
+        spectral,
         rollout_length=train_steps,
     )
     poisoned = train_flax_ppo_on_split(
-        phi.at[train_steps:].set(999.0),
+        market_vectors.at[train_steps:].set(999.0),
         regimes.at[train_steps:].set(jnp.array([1.0, 0.0], dtype=jnp.float32)),
         returns.at[train_steps:].set(-999.0),
         spy.at[train_steps:].set(999.0),
@@ -76,6 +87,9 @@ def test_training_rollout_length_excludes_test_observations() -> None:
         EnvConfig(transaction_cost_rate=0.0),
         config,
         jax.random.PRNGKey(0),
+        embeddings.at[train_steps:].set(999.0),
+        macro.at[train_steps:].set(999.0),
+        spectral.at[train_steps:].set(999.0),
         rollout_length=train_steps,
     )
 
