@@ -1,4 +1,4 @@
-"""Production Flax PPO optimization loop."""
+"""Production Flax PPO optimization loop for asset-only training."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import optax
 from flax.training.train_state import TrainState
 
 from finrl.env.trading_env import EnvConfig, EnvState
+from finrl.features.columns import FeatureRoutingMetadata
 from finrl.logging.tensorboard import TensorBoardLogger
+from finrl.models.asset_encoder import AssetOnlyEncoder, AssetOnlyEncoderConfig
 from finrl.ppo.flax_policy import (
-    PPOState,
     PortfolioActorFlax,
     ProductionPPOConfig,
     build_structured_ppo_state,
@@ -34,9 +35,12 @@ from finrl.types import Array
 
 
 class PPOUpdateBatchFlax(NamedTuple):
-    """Frozen tensors used for production PPO minibatch updates."""
+    """PPO minibatch tensors that keep raw asset windows in the graph."""
 
-    states: Array | PPOState
+    asset_windows: Array
+    prev_weights: Array
+    drawdowns: Array
+    prev_turnovers: Array
     actions: Array
     old_log_probs: Array
     advantages: Array
@@ -45,16 +49,18 @@ class PPOUpdateBatchFlax(NamedTuple):
     rewards: Array
     turnovers: Array
     transaction_costs: Array
-    drawdowns: Array
 
 
 @dataclass(frozen=True, slots=True)
 class ProductionPPOTrainState:
-    """Actor and critic train states for production PPO."""
+    """Single optimizer state for encoder, actor, and critic params."""
 
-    actor: TrainState
-    critic: TrainState
+    policy: TrainState
     config: ProductionPPOConfig
+    encoder_config: AssetOnlyEncoderConfig
+    accumulation_indices: tuple[int, ...]
+    liquidity_indices: tuple[int, ...]
+    feature_routing: FeatureRoutingMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,11 +70,12 @@ class ProductionPPOTrainingResult:
     train_state: ProductionPPOTrainState
     rollout: RolloutBuffer
     metrics: PPOTrainMetrics
+    feature_routing: FeatureRoutingMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ProductionPPOEvaluationResult:
-    """Frozen production PPO evaluation result."""
+    """Production PPO evaluation result."""
 
     train_state: ProductionPPOTrainState
     rollout: RolloutBuffer
@@ -79,52 +86,76 @@ def _optimizer(config: ProductionPPOConfig) -> optax.GradientTransformation:
 
 
 def _tree_global_norm(tree: object) -> Array:
-    """Return the global L2 norm of a gradient pytree."""
-
-    squared_norms = [
-        jnp.sum(jnp.square(leaf))
-        for leaf in jax.tree_util.tree_leaves(tree)
-    ]
+    squared_norms = [jnp.sum(jnp.square(leaf)) for leaf in jax.tree_util.tree_leaves(tree)]
     return jnp.sqrt(jnp.sum(jnp.asarray(squared_norms)))
+
+
+def _modules(
+    config: ProductionPPOConfig,
+    encoder_config: AssetOnlyEncoderConfig,
+    accumulation_indices: tuple[int, ...],
+    liquidity_indices: tuple[int, ...],
+) -> tuple[AssetOnlyEncoder, PortfolioActorFlax, PortfolioCriticFlax]:
+    return (
+        AssetOnlyEncoder(
+            encoder_config,
+            accumulation_indices=accumulation_indices,
+            liquidity_indices=liquidity_indices,
+        ),
+        PortfolioActorFlax(config),
+        PortfolioCriticFlax(config),
+    )
 
 
 def initialize_ppo_train_state(
     rng: Array,
     config: ProductionPPOConfig,
+    encoder_config: AssetOnlyEncoderConfig,
+    accumulation_indices: tuple[int, ...],
+    liquidity_indices: tuple[int, ...],
+    feature_routing: FeatureRoutingMetadata | None = None,
 ) -> ProductionPPOTrainState:
-    """Initialize production Flax actor and critic train states."""
+    """Initialize one train state for encoder, actor, and critic."""
 
-    actor_key, critic_key = jax.random.split(rng)
-    state = build_structured_ppo_state(
-        asset_embeddings=jnp.zeros(
-            (config.action_dim - 1, config.asset_latent_dim),
-            dtype=jnp.float32,
+    encoder_key, actor_key, critic_key = jax.random.split(rng, 3)
+    encoder, actor, critic = _modules(
+        config,
+        encoder_config,
+        accumulation_indices,
+        liquidity_indices,
+    )
+    example_windows = jnp.zeros(
+        (
+            1,
+            encoder_config.lookback,
+            encoder_config.n_assets,
+            encoder_config.asset_feature_dim,
         ),
-        market_vector=jnp.zeros((config.phi_dim,), dtype=jnp.float32),
-        macro_state=jnp.zeros((config.macro_dim,), dtype=jnp.float32),
-        spectral_state=jnp.zeros((config.spectral_dim,), dtype=jnp.float32),
-        regime_probs=jnp.zeros((config.n_regimes,), dtype=jnp.float32),
+        dtype=jnp.float32,
+    )
+    embeddings = encoder.init(encoder_key, example_windows)["params"]
+    example_state = build_structured_ppo_state(
+        asset_embeddings=jnp.zeros((config.action_dim - 1, config.asset_latent_dim), dtype=jnp.float32),
         prev_weights=jnp.zeros((config.action_dim,), dtype=jnp.float32).at[-1].set(1.0),
         drawdown=jnp.array(0.0, dtype=jnp.float32),
         previous_turnover=jnp.array(0.0, dtype=jnp.float32),
     )
-    actor = PortfolioActorFlax(config)
-    critic = PortfolioCriticFlax(config)
-    tx = _optimizer(config)
-    actor_variables = actor.init(actor_key, state)
-    critic_variables = critic.init(critic_key, state)
+    params = {
+        "encoder": embeddings,
+        "actor": actor.init(actor_key, example_state)["params"],
+        "critic": critic.init(critic_key, example_state)["params"],
+    }
     return ProductionPPOTrainState(
-        actor=TrainState.create(
-            apply_fn=actor.apply,
-            params=actor_variables["params"],
-            tx=tx,
-        ),
-        critic=TrainState.create(
-            apply_fn=critic.apply,
-            params=critic_variables["params"],
-            tx=tx,
+        policy=TrainState.create(
+            apply_fn=lambda *_args, **_kwargs: None,
+            params=params,
+            tx=_optimizer(config),
         ),
         config=config,
+        encoder_config=encoder_config,
+        accumulation_indices=accumulation_indices,
+        liquidity_indices=liquidity_indices,
+        feature_routing=feature_routing,
     )
 
 
@@ -143,18 +174,16 @@ def portfolio_allocation_entropy(weights: Array, epsilon: float = 1e-8) -> Array
     return -jnp.sum(weights * jnp.log(safe_weights), axis=-1)
 
 
-def freeze_rollout_batch(
+def build_update_batch(
     rollout: RolloutBatch,
     config: ProductionPPOConfig,
     bootstrap_value: Array | None = None,
 ) -> PPOUpdateBatchFlax:
-    """Compute and freeze advantages/returns from a collected rollout."""
+    """Compute PPO targets while preserving raw asset windows for the loss."""
 
     values = rollout.values
     if bootstrap_value is not None:
-        bootstrap = jnp.atleast_1d(
-            jnp.asarray(bootstrap_value, dtype=rollout.values.dtype)
-        )
+        bootstrap = jnp.atleast_1d(jnp.asarray(bootstrap_value, dtype=rollout.values.dtype))
         values = jnp.concatenate([rollout.values, bootstrap])
     advantages, returns = compute_gae(
         rollout.rewards,
@@ -166,16 +195,18 @@ def freeze_rollout_batch(
     if config.normalize_advantages:
         advantages = normalize_advantages(advantages)
     return PPOUpdateBatchFlax(
-        states=jax.lax.stop_gradient(rollout.states),
-        actions=jax.lax.stop_gradient(rollout.actions),
-        old_log_probs=jax.lax.stop_gradient(rollout.old_log_probs),
+        asset_windows=rollout.asset_windows,
+        prev_weights=rollout.prev_weights,
+        drawdowns=rollout.drawdowns,
+        prev_turnovers=rollout.prev_turnovers,
+        actions=rollout.actions,
+        old_log_probs=rollout.old_log_probs,
         advantages=jax.lax.stop_gradient(advantages),
         returns=jax.lax.stop_gradient(returns),
-        old_values=jax.lax.stop_gradient(rollout.values),
-        rewards=jax.lax.stop_gradient(rollout.rewards),
-        turnovers=jax.lax.stop_gradient(rollout.turnovers),
-        transaction_costs=jax.lax.stop_gradient(rollout.transaction_costs),
-        drawdowns=jax.lax.stop_gradient(rollout.drawdowns),
+        old_values=rollout.values,
+        rewards=rollout.rewards,
+        turnovers=rollout.turnovers,
+        transaction_costs=rollout.transaction_costs,
     )
 
 
@@ -195,30 +226,56 @@ def _minibatches_from_indices(
 ) -> tuple[PPOUpdateBatchFlax, ...]:
     n_steps = int(batch.rewards.shape[0])
     indices = jax.random.permutation(rng, jnp.arange(n_steps))
-    minibatches = []
-    for start in range(0, n_steps, minibatch_size):
-        stop = min(start + minibatch_size, n_steps)
-        minibatches.append(_take_update_batch(batch, indices[start:stop]))
-    return tuple(minibatches)
+    return tuple(
+        _take_update_batch(batch, indices[start : min(start + minibatch_size, n_steps)])
+        for start in range(0, n_steps, minibatch_size)
+    )
+
+
+def _states_from_windows(
+    params: dict[str, object],
+    batch: PPOUpdateBatchFlax,
+    config: ProductionPPOConfig,
+    encoder_config: AssetOnlyEncoderConfig,
+    accumulation_indices: tuple[int, ...],
+    liquidity_indices: tuple[int, ...],
+):
+    encoder = AssetOnlyEncoder(
+        encoder_config,
+        accumulation_indices=accumulation_indices,
+        liquidity_indices=liquidity_indices,
+    )
+    embeddings = encoder.apply({"params": params["encoder"]}, batch.asset_windows)
+    return build_structured_ppo_state(
+        asset_embeddings=embeddings,
+        prev_weights=batch.prev_weights,
+        drawdown=batch.drawdowns,
+        previous_turnover=batch.prev_turnovers,
+    )
 
 
 def _loss_for_params(
-    actor_params: dict[str, object],
-    critic_params: dict[str, object],
+    params: dict[str, object],
     batch: PPOUpdateBatchFlax,
-    config: ProductionPPOConfig,
+    train_state: ProductionPPOTrainState,
 ) -> tuple[Array, PPOTrainMetrics]:
+    config = train_state.config
+    states = _states_from_windows(
+        params,
+        batch,
+        config,
+        train_state.encoder_config,
+        train_state.accumulation_indices,
+        train_state.liquidity_indices,
+    )
     actor = PortfolioActorFlax(config)
     critic = PortfolioCriticFlax(config)
-    logits = jax.vmap(lambda state: actor.apply({"params": actor_params}, state))(
-        batch.states
+    logits = jax.vmap(lambda state: actor.apply({"params": params["actor"]}, state))(states)
+    values = jax.vmap(lambda state: critic.apply({"params": params["critic"]}, state))(states)
+    new_log_probs = jax.vmap(lambda logit, action: action_log_prob(logit, action, config))(
+        logits,
+        batch.actions,
     )
-    values = jax.vmap(lambda state: critic.apply({"params": critic_params}, state))(
-        batch.states
-    )
-    new_log_probs = jax.vmap(
-        lambda logit, action: action_log_prob(logit, action, config)
-    )(logits, batch.actions)
     entropies = jax.vmap(lambda logit: policy_entropy(logit, config))(logits)
     actor_loss = ppo_actor_loss(
         new_log_probs,
@@ -255,11 +312,7 @@ def _loss_for_params(
         entropy=entropy,
         approx_kl=approximate_kl(batch.old_log_probs, new_log_probs),
         post_update_approx_kl=approximate_kl(batch.old_log_probs, new_log_probs),
-        clip_fraction=clip_fraction(
-            batch.old_log_probs,
-            new_log_probs,
-            config.clip_epsilon,
-        ),
+        clip_fraction=clip_fraction(batch.old_log_probs, new_log_probs, config.clip_epsilon),
         explained_variance=explained_variance(values, batch.returns),
         grad_norm=jnp.asarray(0.0, dtype=jnp.float32),
         mean_episode_return=jnp.sum(batch.rewards),
@@ -280,83 +333,55 @@ def _loss_for_params(
     return total, metrics
 
 
+def dataclass_replace(metrics: PPOTrainMetrics, **updates: Array) -> PPOTrainMetrics:
+    values = {name: getattr(metrics, name) for name in PPOTrainMetrics.__dataclass_fields__}
+    values.update(updates)
+    return PPOTrainMetrics(**values)
+
+
 def update_minibatch(
     train_state: ProductionPPOTrainState,
     batch: PPOUpdateBatchFlax,
 ) -> tuple[ProductionPPOTrainState, PPOTrainMetrics]:
-    """Apply one PPO minibatch update."""
+    """Apply one PPO minibatch update to encoder, actor, and critic."""
 
-    config = train_state.config
-
-    def loss_fn(
-        actor_params: dict[str, object],
-        critic_params: dict[str, object],
-    ) -> Array:
-        loss, _ = _loss_for_params(actor_params, critic_params, batch, config)
+    def loss_fn(params: dict[str, object]) -> Array:
+        loss, _ = _loss_for_params(params, batch, train_state)
         return loss
 
-    loss, grads = jax.value_and_grad(
-        loss_fn,
-        argnums=(0, 1),
-    )(train_state.actor.params, train_state.critic.params)
-    del loss
-    actor_grads, critic_grads = grads
+    _, grads = jax.value_and_grad(loss_fn)(train_state.policy.params)
     grad_norm = _tree_global_norm(grads)
-    scale = jnp.minimum(
-        1.0,
-        train_state.config.max_grad_norm / (grad_norm + 1e-8),
+    scale = jnp.minimum(1.0, train_state.config.max_grad_norm / (grad_norm + 1e-8))
+    grads = jax.tree_util.tree_map(lambda grad: grad * scale, grads)
+    _, pre_update_metrics = _loss_for_params(train_state.policy.params, batch, train_state)
+    new_policy = train_state.policy.apply_gradients(grads=grads)
+    updated = ProductionPPOTrainState(
+        policy=new_policy,
+        config=train_state.config,
+        encoder_config=train_state.encoder_config,
+        accumulation_indices=train_state.accumulation_indices,
+        liquidity_indices=train_state.liquidity_indices,
     )
-    actor_grads = jax.tree_util.tree_map(lambda grad: grad * scale, actor_grads)
-    critic_grads = jax.tree_util.tree_map(lambda grad: grad * scale, critic_grads)
-    _, pre_update_metrics = _loss_for_params(
-        train_state.actor.params,
-        train_state.critic.params,
-        batch,
-        config,
-    )
-    new_actor = train_state.actor.apply_gradients(grads=actor_grads)
-    new_critic = train_state.critic.apply_gradients(grads=critic_grads)
-    _, post_update_metrics = _loss_for_params(
-        new_actor.params,
-        new_critic.params,
-        batch,
-        config,
-    )
+    _, post_update_metrics = _loss_for_params(new_policy.params, batch, updated)
     metrics = dataclass_replace(
         pre_update_metrics,
         grad_norm=grad_norm,
         post_update_approx_kl=post_update_metrics.approx_kl,
         updates_completed=jnp.asarray(1.0, dtype=jnp.float32),
     )
-    return (
-        ProductionPPOTrainState(
-            actor=new_actor,
-            critic=new_critic,
-            config=config,
-        ),
-        metrics,
-    )
-
-
-def dataclass_replace(metrics: PPOTrainMetrics, **updates: Array) -> PPOTrainMetrics:
-    """Return metrics with selected fields replaced."""
-
-    values = {
-        name: getattr(metrics, name)
-        for name in PPOTrainMetrics.__dataclass_fields__
-    }
-    values.update(updates)
-    return PPOTrainMetrics(**values)
+    return updated, metrics
 
 
 def _mean_metrics(metrics: list[PPOTrainMetrics]) -> PPOTrainMetrics:
     if not metrics:
         zero = jnp.asarray(0.0, dtype=jnp.float32)
         return PPOTrainMetrics(*(zero for _ in PPOTrainMetrics.__dataclass_fields__))
-    values = {}
-    for name in PPOTrainMetrics.__dataclass_fields__:
-        values[name] = jnp.mean(jnp.stack([getattr(item, name) for item in metrics]))
-    return PPOTrainMetrics(**values)
+    return PPOTrainMetrics(
+        **{
+            name: jnp.mean(jnp.stack([getattr(item, name) for item in metrics]))
+            for name in PPOTrainMetrics.__dataclass_fields__
+        }
+    )
 
 
 def train_epoch(
@@ -366,17 +391,16 @@ def train_epoch(
     logger: TensorBoardLogger | None = None,
     step_offset: int = 0,
 ) -> tuple[ProductionPPOTrainState, PPOTrainMetrics]:
-    """Train over one frozen rollout for up to ``config.update_epochs``."""
+    """Train over one rollout for up to ``config.update_epochs``."""
 
     state = train_state
     all_metrics: list[PPOTrainMetrics] = []
     epochs_completed = 0
     for epoch in range(state.config.update_epochs):
-        epoch_key = jax.random.fold_in(rng, epoch)
         minibatches = _minibatches_from_indices(
             batch,
             state.config.minibatch_size,
-            epoch_key,
+            jax.random.fold_in(rng, epoch),
         )
         stop = False
         for minibatch in minibatches:
@@ -388,97 +412,95 @@ def train_epoch(
                     step_offset + len(all_metrics),
                     "production_ppo",
                 )
-            post_update_kl = float(jax.device_get(metrics.post_update_approx_kl))
-            if post_update_kl > state.config.target_kl:
+            if float(jax.device_get(metrics.post_update_approx_kl)) > state.config.target_kl:
                 stop = True
                 break
         epochs_completed += 1
         if stop:
             break
     merged = _mean_metrics(all_metrics)
-    merged = dataclass_replace(
+    return state, dataclass_replace(
         merged,
         updates_completed=jnp.asarray(len(all_metrics), dtype=jnp.float32),
         epochs_completed=jnp.asarray(epochs_completed, dtype=jnp.float32),
     )
-    return state, merged
 
 
 def train_ppo_on_split(
-    market_vectors: Array,
-    regime_probs: Array,
+    asset_windows: Array,
     asset_returns: Array,
     spy_returns: Array,
     initial_env_state: EnvState,
     env_config: EnvConfig,
     config: ProductionPPOConfig,
+    encoder_config: AssetOnlyEncoderConfig,
+    accumulation_indices: tuple[int, ...],
+    liquidity_indices: tuple[int, ...],
     rng: Array,
-    asset_embeddings: Array,
-    macro_states: Array,
-    spectral_states: Array,
     rollout_length: int | None = None,
     logger: TensorBoardLogger | None = None,
+    feature_routing: FeatureRoutingMetadata | None = None,
 ) -> ProductionPPOTrainingResult:
-    """Collect a train rollout and optimize production PPO on that split."""
+    """Collect a rollout and optimize asset-only PPO on that split."""
 
     init_key, rollout_key, train_key = jax.random.split(rng, 3)
-    state = initialize_ppo_train_state(init_key, config)
+    state = initialize_ppo_train_state(
+        init_key,
+        config,
+        encoder_config,
+        accumulation_indices,
+        liquidity_indices,
+        feature_routing,
+    )
     rollout = collect_rollout(
-        {"params": state.actor.params},
-        {"params": state.critic.params},
-        market_vectors,
-        regime_probs,
+        {"params": state.policy.params},
+        asset_windows,
         asset_returns,
         spy_returns,
         initial_env_state,
         env_config,
         config,
+        encoder_config,
+        accumulation_indices,
+        liquidity_indices,
         rollout_key,
         rollout_length=rollout_length,
-        asset_embeddings=asset_embeddings,
-        macro_states=macro_states,
-        spectral_states=spectral_states,
     )
-    update_batch = freeze_rollout_batch(rollout.batch, config, rollout.bootstrap_value)
+    update_batch = build_update_batch(rollout.batch, config, rollout.bootstrap_value)
     state, metrics = train_epoch(state, update_batch, train_key, logger)
     return ProductionPPOTrainingResult(
         train_state=state,
         rollout=rollout,
         metrics=metrics,
+        feature_routing=feature_routing,
     )
 
 
-def evaluate_frozen_policy(
+def evaluate_policy(
     train_state: ProductionPPOTrainState,
-    market_vectors: Array,
-    regime_probs: Array,
+    asset_windows: Array,
     asset_returns: Array,
     spy_returns: Array,
     initial_env_state: EnvState,
     env_config: EnvConfig,
     rng: Array,
-    asset_embeddings: Array,
-    macro_states: Array,
-    spectral_states: Array,
     rollout_length: int | None = None,
 ) -> ProductionPPOEvaluationResult:
-    """Evaluate a frozen policy without updating params or optimizer state."""
+    """Evaluate a policy without updating params."""
 
     rollout = collect_rollout(
-        {"params": train_state.actor.params},
-        {"params": train_state.critic.params},
-        market_vectors,
-        regime_probs,
+        {"params": train_state.policy.params},
+        asset_windows,
         asset_returns,
         spy_returns,
         initial_env_state,
         env_config,
         train_state.config,
+        train_state.encoder_config,
+        train_state.accumulation_indices,
+        train_state.liquidity_indices,
         rng,
         rollout_length=rollout_length,
-        asset_embeddings=asset_embeddings,
-        macro_states=macro_states,
-        spectral_states=spectral_states,
         deterministic=True,
     )
     return ProductionPPOEvaluationResult(train_state=train_state, rollout=rollout)

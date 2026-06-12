@@ -110,6 +110,30 @@ def test_environment_step_all_cash_allocation_earns_cash_return_less_cost() -> N
     assert_allclose(result.state.portfolio_value, 100.1, rtol=RTOL, atol=ATOL)
 
 
+def test_environment_step_applies_top_n_weights_before_accounting() -> None:
+    state = EnvState(
+        weights=jnp.array([0.25, 0.25, 0.25, 0.25], dtype=jnp.float32),
+        portfolio_value=jnp.array(100.0, dtype=jnp.float32),
+        peak_value=jnp.array(100.0, dtype=jnp.float32),
+        drawdown=jnp.array(0.0, dtype=jnp.float32),
+        previous_turnover=jnp.array(0.0, dtype=jnp.float32),
+        step=jnp.array(0, dtype=jnp.int32),
+    )
+    result = environment_step(
+        state,
+        jnp.array([0.10, 0.30, 0.20, 0.40], dtype=jnp.float32),
+        jnp.array([0.10, 0.03, 0.06, 0.001], dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        EnvConfig(transaction_cost_rate=0.0, cash_index=3, top_n_positions=2),
+    )
+
+    expected_weights = jnp.array([0.0, 1.0 / 3.0, 2.0 / 9.0, 4.0 / 9.0], dtype=jnp.float32)
+    expected_return = jnp.sum(expected_weights * jnp.array([0.10, 0.03, 0.06, 0.001]))
+    assert_allclose(result.state.weights, expected_weights, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.gross_return, expected_return, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 5.0 / 18.0, rtol=RTOL, atol=ATOL)
+
+
 def test_environment_step_high_turnover_with_zero_returns_is_finite() -> None:
     result = environment_step(
         _initial_state(),
@@ -138,6 +162,27 @@ def test_environment_step_supports_jit() -> None:
 
     assert_allclose(result.turnover, 0.3, rtol=RTOL, atol=ATOL)
     assert_allclose(result.state.portfolio_value, 99.9, rtol=RTOL, atol=ATOL)
+
+
+def test_environment_step_top_n_supports_jit() -> None:
+    jitted_step = jax.jit(environment_step)
+
+    result = jitted_step(
+        EnvState(
+            weights=jnp.array([0.25, 0.25, 0.25, 0.25], dtype=jnp.float32),
+            portfolio_value=jnp.array(100.0, dtype=jnp.float32),
+            peak_value=jnp.array(100.0, dtype=jnp.float32),
+            drawdown=jnp.array(0.0, dtype=jnp.float32),
+            previous_turnover=jnp.array(0.0, dtype=jnp.float32),
+            step=jnp.array(0, dtype=jnp.int32),
+        ),
+        jnp.array([0.10, 0.30, 0.20, 0.40], dtype=jnp.float32),
+        jnp.array([0.10, 0.03, 0.06, 0.001], dtype=jnp.float32),
+        jnp.array(0.0, dtype=jnp.float32),
+        EnvConfig(transaction_cost_rate=0.0, cash_index=3, top_n_positions=2),
+    )
+
+    assert_allclose(result.state.weights, [0.0, 1.0 / 3.0, 2.0 / 9.0, 4.0 / 9.0], rtol=RTOL, atol=ATOL)
 
 
 def test_invalid_actions_preserve_previous_weights() -> None:

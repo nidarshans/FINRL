@@ -20,34 +20,24 @@ from finrl.backtest.walk_forward import (
     WalkForwardSplit,
     generate_walk_forward_splits,
     slice_feature_bundle,
-    slice_returns,
 )
 from finrl.env.trading_env import EnvState, scan_environment
 from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
 from finrl.experiments.config import ExperimentConfig
+from finrl.features.columns import FeatureRoutingMetadata, selected_feature_indices
 from finrl.features.preprocessing import fit_transform_train_transform_test
 from finrl.features.schema import FeatureBundle
 from finrl.logging.tensorboard import TensorBoardLogger
-from finrl.models.encoder_training import (
-    EncoderTrainingConfig,
-    fit_encoder_on_train_split,
-)
-from finrl.models.flax_encoder import (
-    ProductionEncoderConfig,
-    encode_market_state_with_latents_flax,
-    init_encoder_variables,
-)
+from finrl.models.asset_encoder import AssetOnlyEncoderConfig
 from finrl.models.windows import LookbackWindows, build_lookback_windows
 from finrl.ppo.flax_policy import ProductionPPOConfig
 from finrl.ppo.flax_trainer import (
     ProductionPPOEvaluationResult,
     ProductionPPOTrainState,
     ProductionPPOTrainingResult,
-    evaluate_frozen_policy as evaluate_frozen_flax_policy,
+    evaluate_policy as evaluate_flax_policy,
     train_ppo_on_split as train_flax_ppo_on_split,
 )
-from finrl.regimes.filtering import filter_regime_probabilities
-from finrl.regimes.hmm import fit_hmm
 
 
 class SplitRunResult(NamedTuple):
@@ -57,13 +47,7 @@ class SplitRunResult(NamedTuple):
     result: SplitResult
 
 
-class ProductionEncodedWindows(NamedTuple):
-    """Production encoder outputs aligned to lookback windows."""
-
-    asset_embeddings: np.ndarray
-    market_vectors: np.ndarray
-    macro_states: np.ndarray
-    spectral_states: np.ndarray
+CASH_RETURN_COLUMN = "CASH"
 
 
 def _combine_feature_bundles(train: FeatureBundle, test: FeatureBundle) -> FeatureBundle:
@@ -89,10 +73,7 @@ def _split_windows(
     test_date_set = set(test_dates)
     train_indices = [index for index, day in enumerate(windows.decision_dates) if day in train_date_set]
     test_indices = [index for index, day in enumerate(windows.decision_dates) if day in test_date_set]
-    return (
-        _select_windows(windows, train_indices),
-        _select_windows(windows, test_indices),
-    )
+    return _select_windows(windows, train_indices), _select_windows(windows, test_indices)
 
 
 def _select_windows(windows: LookbackWindows, indices: list[int]) -> LookbackWindows:
@@ -110,56 +91,7 @@ def _select_windows(windows: LookbackWindows, indices: list[int]) -> LookbackWin
     )
 
 
-def _production_encoder_config(
-    train_windows: LookbackWindows,
-    config: ExperimentConfig,
-) -> ProductionEncoderConfig:
-    return replace(
-        config.production_encoder,
-        lookback=train_windows.asset.shape[1],
-        n_assets=train_windows.asset.shape[2],
-        asset_feature_dim=train_windows.asset.shape[3],
-        macro_feature_dim=train_windows.macro.shape[2],
-        spectral_feature_dim=train_windows.spectral.shape[1],
-    )
-
-
-def _encode_windows_flax(
-    windows: LookbackWindows,
-    encoder_config: ProductionEncoderConfig,
-    variables: dict[str, object],
-) -> ProductionEncodedWindows:
-    outputs = jax.vmap(
-        lambda asset_window, macro_window, spectral_row: encode_market_state_with_latents_flax(
-            variables,
-            asset_window,
-            macro_window,
-            spectral_row,
-            encoder_config,
-        )
-    )(
-        jnp.asarray(windows.asset, dtype=jnp.float32),
-        jnp.asarray(windows.macro, dtype=jnp.float32),
-        jnp.asarray(windows.spectral, dtype=jnp.float32),
-    )
-    return ProductionEncodedWindows(
-        asset_embeddings=np.asarray(outputs.asset_embeddings, dtype=np.float32),
-        market_vectors=np.asarray(outputs.market_vector, dtype=np.float64),
-        macro_states=np.asarray(outputs.macro_state, dtype=np.float32),
-        spectral_states=np.asarray(outputs.spectral_state, dtype=np.float32),
-    )
-
-
-CASH_RETURN_COLUMN = "CASH"
-
-
-def _return_columns(frame: pl.DataFrame) -> tuple[str, ...]:
-    return tuple(column for column in frame.columns if column != "decision_date")
-
-
 def _action_return_columns(windows: LookbackWindows) -> tuple[str, ...]:
-    """Return risky assets in window order plus the required cash action."""
-
     return (*windows.tickers, CASH_RETURN_COLUMN)
 
 
@@ -191,18 +123,8 @@ def _spy_for_dates(frame: pl.DataFrame, dates: tuple[object, ...]) -> np.ndarray
     return _returns_for_dates(frame, dates, ("spy_return",)).reshape(-1)
 
 
-def _returns_for_window_tickers(
-    frame: pl.DataFrame,
-    windows: LookbackWindows,
-) -> np.ndarray:
+def _returns_for_window_tickers(frame: pl.DataFrame, windows: LookbackWindows) -> np.ndarray:
     return _returns_for_dates(frame, windows.decision_dates, _action_return_columns(windows))
-
-
-def _risky_returns_for_window_tickers(
-    frame: pl.DataFrame,
-    windows: LookbackWindows,
-) -> np.ndarray:
-    return _returns_for_dates(frame, windows.decision_dates, windows.tickers)
 
 
 def _initial_env_state(n_assets: int) -> EnvState:
@@ -217,139 +139,76 @@ def _initial_env_state(n_assets: int) -> EnvState:
     )
 
 
-def fit_encoder_train_artifacts(
-    train_windows: LookbackWindows,
-    test_windows: LookbackWindows,
-    returns: pl.DataFrame,
+def _asset_only_encoder_config(
+    windows: LookbackWindows,
     config: ExperimentConfig,
-    split_index: int = 0,
-    logger: TensorBoardLogger | None = None,
-) -> tuple[ProductionEncodedWindows, ProductionEncodedWindows, object]:
-    """Fit production encoder on train windows and encode train/test windows."""
-
-    encoder_config = _production_encoder_config(train_windows, config)
-    train_key = jax.random.PRNGKey(config.seed + split_index)
-    train_returns = _risky_returns_for_window_tickers(returns, train_windows)
-    training_config = EncoderTrainingConfig(
-        batch_size=min(32, max(1, train_windows.asset.shape[0] - 1)),
-        epochs=1,
-        learning_rate=config.production_ppo.learning_rate,
+) -> AssetOnlyEncoderConfig:
+    return AssetOnlyEncoderConfig(
+        lookback=windows.asset.shape[1],
+        n_assets=windows.asset.shape[2],
+        asset_feature_dim=windows.asset.shape[3],
+        asset_hidden_dim=config.production_encoder.asset_hidden_dim,
+        normalize_output=config.production_encoder.normalize_output,
     )
-    if train_windows.asset.shape[0] <= training_config.label_horizon:
-        variables = init_encoder_variables(train_key, encoder_config)
-        train_encoded = _encode_windows_flax(train_windows, encoder_config, variables)
-        test_encoded = _encode_windows_flax(test_windows, encoder_config, variables)
-        return train_encoded, test_encoded, None
-
-    training = fit_encoder_on_train_split(
-        train_key,
-        train_windows,
-        train_returns,
-        encoder_config,
-        training_config,
-        train_window_count=train_windows.asset.shape[0],
-        logger=logger,
-    )
-    variables = {"params": training.train_state.params["encoder"]}
-    train_encoded = _encode_windows_flax(train_windows, encoder_config, variables)
-    test_encoded = _encode_windows_flax(test_windows, encoder_config, variables)
-    return train_encoded, test_encoded, training
-
-
-def fit_hmm_train_artifacts(
-    train_market_vectors: np.ndarray,
-    test_market_vectors: np.ndarray,
-    split: WalkForwardSplit,
-    config: ExperimentConfig,
-) -> tuple[object, np.ndarray, np.ndarray]:
-    """Fit HMM on train encodings and filter train/test probabilities."""
-
-    hmm_config = replace(
-        config.hmm,
-        train_start=split.train_start,
-        train_end=split.train_end,
-    )
-    fitted_hmm = fit_hmm(train_market_vectors, hmm_config)
-    train_regime_probs = filter_regime_probabilities(fitted_hmm, train_market_vectors)
-    combined_regime_probs = filter_regime_probabilities(
-        fitted_hmm,
-        np.concatenate([train_market_vectors, test_market_vectors], axis=0),
-    )
-    test_regime_probs = combined_regime_probs[-test_market_vectors.shape[0] :]
-    return fitted_hmm, train_regime_probs, test_regime_probs
 
 
 def fit_ppo_train_artifacts(
-    train_market_vectors: np.ndarray,
-    train_asset_embeddings: np.ndarray,
-    train_macro_states: np.ndarray,
-    train_spectral_states: np.ndarray,
-    train_regime_probs: np.ndarray,
+    train_windows: LookbackWindows,
     train_returns: np.ndarray,
     train_spy: np.ndarray,
     config: ExperimentConfig,
     split_index: int = 0,
     logger: TensorBoardLogger | None = None,
+    feature_routing: FeatureRoutingMetadata | None = None,
 ) -> ProductionPPOTrainingResult:
-    """Fit production PPO on train arrays only."""
+    """Fit production PPO directly from raw asset windows."""
 
+    routing = feature_routing or selected_feature_indices(train_windows.asset_feature_columns)
+    acc_indices = routing.accumulation_indices
+    liq_indices = routing.liquidity_exit_indices
+    encoder_config = _asset_only_encoder_config(train_windows, config)
     ppo_config = replace(
         config.production_ppo,
-        phi_dim=train_market_vectors.shape[1],
-        asset_latent_dim=train_asset_embeddings.shape[2],
-        macro_dim=train_macro_states.shape[1],
-        spectral_dim=train_spectral_states.shape[1],
-        n_regimes=train_regime_probs.shape[1],
+        asset_latent_dim=encoder_config.asset_hidden_dim,
         n_assets=train_returns.shape[1],
-        minibatch_size=min(
-            config.production_ppo.minibatch_size,
-            train_market_vectors.shape[0],
-        ),
+        minibatch_size=min(config.production_ppo.minibatch_size, train_windows.asset.shape[0]),
     )
     return train_flax_ppo_on_split(
-        jnp.asarray(train_market_vectors, dtype=jnp.float32),
-        jnp.asarray(train_regime_probs, dtype=jnp.float32),
+        jnp.asarray(train_windows.asset, dtype=jnp.float32),
         jnp.asarray(train_returns, dtype=jnp.float32),
         jnp.asarray(train_spy, dtype=jnp.float32),
         _initial_env_state(train_returns.shape[1]),
         config.env,
         ppo_config,
+        encoder_config,
+        acc_indices,
+        liq_indices,
         jax.random.PRNGKey(config.seed + split_index),
-        jnp.asarray(train_asset_embeddings, dtype=jnp.float32),
-        jnp.asarray(train_macro_states, dtype=jnp.float32),
-        jnp.asarray(train_spectral_states, dtype=jnp.float32),
-        rollout_length=train_market_vectors.shape[0],
+        rollout_length=train_windows.asset.shape[0],
         logger=logger,
+        feature_routing=routing,
     )
 
 
-def evaluate_frozen_production_policy(
+def evaluate_production_policy(
     policy_state: ProductionPPOTrainState,
-    test_market_vectors: np.ndarray,
-    test_asset_embeddings: np.ndarray,
-    test_macro_states: np.ndarray,
-    test_spectral_states: np.ndarray,
-    test_regime_probs: np.ndarray,
+    test_windows: LookbackWindows,
     test_returns: np.ndarray,
     test_spy: np.ndarray,
     config: ExperimentConfig,
     split_index: int = 0,
 ) -> ProductionPPOEvaluationResult:
-    """Evaluate a frozen production PPO policy on test arrays."""
+    """Evaluate a frozen production PPO policy on test windows."""
 
-    return evaluate_frozen_flax_policy(
+    return evaluate_flax_policy(
         policy_state,
-        jnp.asarray(test_market_vectors, dtype=jnp.float32),
-        jnp.asarray(test_regime_probs, dtype=jnp.float32),
+        jnp.asarray(test_windows.asset, dtype=jnp.float32),
         jnp.asarray(test_returns, dtype=jnp.float32),
         jnp.asarray(test_spy, dtype=jnp.float32),
         _initial_env_state(test_returns.shape[1]),
         config.env,
         jax.random.PRNGKey(config.seed + split_index + 10_000),
-        jnp.asarray(test_asset_embeddings, dtype=jnp.float32),
-        jnp.asarray(test_macro_states, dtype=jnp.float32),
-        jnp.asarray(test_spectral_states, dtype=jnp.float32),
-        rollout_length=test_market_vectors.shape[0],
+        rollout_length=test_windows.asset.shape[0],
     )
 
 
@@ -368,10 +227,7 @@ def _allocation_frame(
         {
             "decision_date": list(dates),
             "split_index": [split_index] * len(dates),
-            **{
-                asset: actions[:, index]
-                for index, asset in enumerate(asset_columns)
-            },
+            **{asset: actions[:, index] for index, asset in enumerate(asset_columns)},
         }
     )
 
@@ -385,14 +241,10 @@ def fit_train_artifacts(
     split_index: int = 0,
     logger: TensorBoardLogger | None = None,
 ) -> ExperimentArtifacts:
-    """Fit preprocessing, encoder states, HMM, and optional PPO on train only."""
+    """Fit preprocessing and optional asset-only PPO on train only."""
 
     train_features, test_features = slice_feature_bundle(features, split)
-    preprocessed = fit_transform_train_transform_test(
-        train_features,
-        test_features,
-        config.preprocessing,
-    )
+    preprocessed = fit_transform_train_transform_test(train_features, test_features, config.preprocessing)
     combined = _combine_feature_bundles(preprocessed.train, preprocessed.test)
     combined_windows = build_lookback_windows(combined, config.production_encoder.lookback)
     train_windows, test_windows = _split_windows(
@@ -400,44 +252,21 @@ def fit_train_artifacts(
         preprocessed.train.decision_dates,
         preprocessed.test.decision_dates,
     )
-    train_encoded, test_encoded, production_encoder_training = fit_encoder_train_artifacts(
-        train_windows,
-        test_windows,
-        returns,
-        config,
-        split_index,
-        logger,
-    )
-    train_market_vectors = train_encoded.market_vectors
-    test_market_vectors = test_encoded.market_vectors
-    train_asset_embeddings = train_encoded.asset_embeddings
-    test_asset_embeddings = test_encoded.asset_embeddings
-    train_macro_states = train_encoded.macro_states
-    test_macro_states = test_encoded.macro_states
-    train_spectral_states = train_encoded.spectral_states
-    test_spectral_states = test_encoded.spectral_states
-    fitted_hmm, train_regime_probs, test_regime_probs = fit_hmm_train_artifacts(
-        train_market_vectors,
-        test_market_vectors,
-        split,
-        config,
-    )
     train_returns = _returns_for_window_tickers(returns, train_windows)
     train_spy = _spy_for_dates(spy_returns, train_windows.decision_dates)
+    feature_routing = None
     production_ppo_training = None
     production_policy_state = None
     if config.enable_ppo:
+        feature_routing = selected_feature_indices(train_windows.asset_feature_columns)
         production_ppo_training = fit_ppo_train_artifacts(
-            train_market_vectors,
-            train_asset_embeddings,
-            train_macro_states,
-            train_spectral_states,
-            train_regime_probs,
+            train_windows,
             train_returns,
             train_spy,
             config,
             split_index,
             logger,
+            feature_routing,
         )
         production_policy_state = production_ppo_training.train_state
     return ExperimentArtifacts(
@@ -445,19 +274,8 @@ def fit_train_artifacts(
         preprocessor=preprocessed.preprocessor,
         train_windows=train_windows,
         test_windows=test_windows,
-        train_market_vectors=train_market_vectors,
-        test_market_vectors=test_market_vectors,
-        train_regime_probs=train_regime_probs,
-        test_regime_probs=test_regime_probs,
-        train_asset_embeddings=train_asset_embeddings,
-        test_asset_embeddings=test_asset_embeddings,
-        train_macro_states=train_macro_states,
-        test_macro_states=test_macro_states,
-        train_spectral_states=train_spectral_states,
-        test_spectral_states=test_spectral_states,
         train_spy_returns=train_spy if config.enable_ppo else None,
-        fitted_hmm=fitted_hmm,
-        production_encoder_training=production_encoder_training,
+        feature_routing=feature_routing,
         production_ppo_training=production_ppo_training,
         production_policy_state=production_policy_state,
     )
@@ -468,10 +286,7 @@ def run_benchmark_suite(
     spy_returns: np.ndarray,
     config: ExperimentConfig,
 ) -> pl.DataFrame:
-    """Return the S&P 500 benchmark stream for the split.
-
-    Additional Phase 4 benchmark strategies plug in here later.
-    """
+    """Return the S&P 500 benchmark stream for the split."""
 
     del config
     return pl.DataFrame(
@@ -492,6 +307,7 @@ def evaluate_test_split(
 ) -> SplitResult:
     """Evaluate a split with frozen train-fitted artifacts."""
 
+    del split
     return_columns = _action_return_columns(frozen_artifacts.test_windows)
     test_dates = frozen_artifacts.test_windows.decision_dates
     test_returns = _returns_for_dates(returns, test_dates, return_columns)
@@ -499,31 +315,17 @@ def evaluate_test_split(
     if config.enable_ppo:
         if frozen_artifacts.production_policy_state is None:
             raise ValueError("Production PPO evaluation requires a policy state.")
-        if (
-            frozen_artifacts.test_asset_embeddings is None
-            or frozen_artifacts.test_macro_states is None
-            or frozen_artifacts.test_spectral_states is None
-        ):
-            raise ValueError("Production PPO evaluation requires encoded context states.")
-        production_evaluation = evaluate_frozen_production_policy(
+        production_evaluation = evaluate_production_policy(
             frozen_artifacts.production_policy_state,
-            frozen_artifacts.test_market_vectors,
-            frozen_artifacts.test_asset_embeddings,
-            frozen_artifacts.test_macro_states,
-            frozen_artifacts.test_spectral_states,
-            frozen_artifacts.test_regime_probs,
+            frozen_artifacts.test_windows,
             test_returns,
             test_spy,
             config,
             split_index,
         )
-        portfolio_returns = np.asarray(
-            production_evaluation.rollout.step_results.net_return
-        )
+        portfolio_returns = np.asarray(production_evaluation.rollout.step_results.net_return)
         turnovers = np.asarray(production_evaluation.rollout.step_results.turnover)
-        costs = np.asarray(
-            production_evaluation.rollout.step_results.transaction_cost
-        )
+        costs = np.asarray(production_evaluation.rollout.step_results.transaction_cost)
         actions = np.asarray(production_evaluation.rollout.batch.actions)
     else:
         actions = _environment_only_actions(test_returns.shape[0], test_returns.shape[1])
@@ -539,7 +341,7 @@ def evaluate_test_split(
         costs = np.asarray(step_results.transaction_cost)
         actions = np.asarray(actions)
 
-    benchmark = run_benchmark_suite(split, test_spy, config)
+    benchmark = run_benchmark_suite(frozen_artifacts.split, test_spy, config)
     metrics = calculate_performance_metrics(
         portfolio_returns,
         test_spy,
@@ -564,39 +366,23 @@ def evaluate_test_split(
         }
     )
     allocation_frame = _allocation_frame(test_dates, actions, return_columns, split_index)
-    regime_frame = pl.DataFrame(
-        {
-            "decision_date": list(test_dates),
-            "split_index": [split_index] * len(test_dates),
-            **{
-                f"regime_{index}": frozen_artifacts.test_regime_probs[:, index]
-                for index in range(frozen_artifacts.test_regime_probs.shape[1])
-            },
-        }
+    empty_regime_frame = pl.DataFrame(
+        {"decision_date": list(test_dates), "split_index": [split_index] * len(test_dates)}
     )
-    spectral_frame = pl.DataFrame(
-        {
-            "decision_date": list(test_dates),
-            "split_index": [split_index] * len(test_dates),
-            **{
-                column: frozen_artifacts.test_windows.spectral[:, index]
-                for index, column in enumerate(
-                    frozen_artifacts.test_windows.spectral_feature_columns
-                )
-            },
-        }
+    empty_spectral_frame = pl.DataFrame(
+        {"decision_date": list(test_dates), "split_index": [split_index] * len(test_dates)}
     )
     return SplitResult(
         split_index=split_index,
-        train_start=split.train_start,
-        train_end=split.train_end,
-        test_start=split.test_start,
-        test_end=split.test_end,
+        train_start=frozen_artifacts.split.train_start,
+        train_end=frozen_artifacts.split.train_end,
+        test_start=frozen_artifacts.split.test_start,
+        test_end=frozen_artifacts.split.test_end,
         portfolio_returns=portfolio_frame,
         spy_returns=benchmark,
         allocations=allocation_frame,
-        regime_probabilities=regime_frame,
-        spectral_features=spectral_frame,
+        regime_probabilities=empty_regime_frame,
+        spectral_features=empty_spectral_frame,
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
     )
@@ -613,19 +399,12 @@ def _log_evaluation_metrics(
         return
     if artifacts.train_spy_returns is None:
         raise ValueError("Train SPY returns are required for PPO evaluation logging.")
-    train_returns = np.asarray(
-        artifacts.production_ppo_training.rollout.step_results.net_return
-    )
-    train_turnovers = np.asarray(
-        artifacts.production_ppo_training.rollout.step_results.turnover
-    )
-    train_costs = np.asarray(
-        artifacts.production_ppo_training.rollout.step_results.transaction_cost
-    )
-    train_spy = np.asarray(artifacts.train_spy_returns)
+    train_returns = np.asarray(artifacts.production_ppo_training.rollout.step_results.net_return)
+    train_turnovers = np.asarray(artifacts.production_ppo_training.rollout.step_results.turnover)
+    train_costs = np.asarray(artifacts.production_ppo_training.rollout.step_results.transaction_cost)
     train_metrics = calculate_performance_metrics(
         train_returns,
-        train_spy,
+        np.asarray(artifacts.train_spy_returns),
         train_turnovers,
         train_costs,
         config.periods_per_year,
@@ -698,10 +477,7 @@ def aggregate_walk_forward_results(
     portfolio_returns = pl.concat([result.portfolio_returns for result in results], how="vertical")
     spy_returns = pl.concat([result.spy_returns for result in results], how="vertical")
     allocations = pl.concat([result.allocations for result in results], how="vertical")
-    regime_probabilities = pl.concat(
-        [result.regime_probabilities for result in results],
-        how="vertical",
-    )
+    regime_probabilities = pl.concat([result.regime_probabilities for result in results], how="vertical")
     spectral = pl.concat([result.spectral_features for result in results], how="vertical")
     portfolio_curve_values = equity_curve(portfolio_returns["portfolio_return"].to_numpy())
     spy_curve_values = equity_curve(spy_returns["spy_return"].to_numpy())
@@ -743,10 +519,7 @@ def run_walk_forward_experiment(
 ) -> WalkForwardResult:
     """Run all strict walk-forward splits for prepared data."""
 
-    splits = generate_walk_forward_splits(
-        raw_data.features.decision_dates,
-        config.walk_forward,
-    )
+    splits = generate_walk_forward_splits(raw_data.features.decision_dates, config.walk_forward)
     split_results = tuple(
         run_split(split, raw_data, config, split_index).result
         for split_index, split in enumerate(splits)

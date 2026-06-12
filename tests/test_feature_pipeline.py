@@ -75,6 +75,7 @@ def test_build_feature_bundle_aligns_to_friday_decision_dates() -> None:
             volume_window=2,
             spectral_window=2,
             spectral_dim=20,
+            use_spectral_features=False,
         ),
     )
 
@@ -84,6 +85,7 @@ def test_build_feature_bundle_aligns_to_friday_decision_dates() -> None:
     assert features.macro_features.height == 2
     assert features.spectral_features.height == 2
     assert len(features.spectral_feature_columns) == 20
+    assert features.spectral_features.drop("date").sum().row(0) == (0.0,) * 20
     assert set(features.asset_features.get_column("date").to_list()) == {
         date(2024, 1, 5),
         date(2024, 1, 12),

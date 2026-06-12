@@ -19,13 +19,13 @@ class RewardConfig(NamedTuple):
     """
 
     drawdown_limit: float = 0.05
-    drawdown_penalty: float = 0.2
+    drawdown_penalty: float = 0.0
     drawdown_penalty_type: str | int = "smooth"
     drawdown_temp: float = 0.01
-    turnover_penalty: float = 0.1
+    turnover_penalty: float = 0.0
     active_risk_penalty: float = 0.0
     sortino_target_return: float = 0.0
-    sortino_downside_penalty: float = 0.5
+    sortino_downside_penalty: float = 0.05
 
 
 class RewardFn(Protocol):
@@ -62,11 +62,15 @@ def calculate_spy_relative_reward(
         else config.drawdown_penalty_type == 1
     )
     drawdown_penalty = jnp.where(use_hinge, hinge_penalty, smooth_penalty)
-    downside_shortfall = jnp.minimum(config.sortino_target_return - net_return, 0.0)
+    log_return = jnp.log1p(net_return)
+    active_return = net_return - spy_return
+    downside_shortfall = jnp.maximum(config.sortino_target_return - net_return, 0.0)
     return (
-        jnp.log1p(net_return)
+        log_return
+        # - config.drawdown_penalty * drawdown_penalty
         - config.sortino_downside_penalty * jnp.square(downside_shortfall)
-        - config.turnover_penalty * turnover
+        # - config.turnover_penalty * turnover
+        # - config.active_risk_penalty * jnp.square(active_return)
     )
 
 

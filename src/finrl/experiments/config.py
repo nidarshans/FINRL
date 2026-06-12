@@ -8,9 +8,8 @@ from pathlib import Path
 from finrl.backtest.walk_forward import WalkForwardConfig
 from finrl.env.trading_env import EnvConfig
 from finrl.features.preprocessing import PreprocessingConfig
-from finrl.models.flax_encoder import ProductionEncoderConfig
+from finrl.models.asset_encoder import ProductionEncoderConfig
 from finrl.ppo.flax_policy import ProductionPPOConfig
-from finrl.regimes.schema import HMMConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,10 +19,10 @@ class ExperimentConfig:
     walk_forward: WalkForwardConfig = WalkForwardConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
     production_encoder: ProductionEncoderConfig = ProductionEncoderConfig()
-    hmm: HMMConfig = HMMConfig()
     production_ppo: ProductionPPOConfig = ProductionPPOConfig()
     env: EnvConfig = EnvConfig()
     enable_ppo: bool = True
+    use_asset_only_ppo: bool = True
     seed: int = 0
     periods_per_year: int = 52
     output_dir: Path | None = None

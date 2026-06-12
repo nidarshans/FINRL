@@ -113,41 +113,6 @@ class TensorBoardLogger:
             }
             add_hparams(serializable, {})
 
-    def log_regime_metrics(
-        self,
-        regime_probs: Array,
-        actions: Array,
-        step: int,
-        prefix: str = "regime",
-    ) -> None:
-        """Log average HMM probabilities and allocation by regime."""
-
-        if not self.enabled:
-            return
-        probs = np.asarray(jax.device_get(regime_probs), dtype=np.float64)
-        allocations = np.asarray(jax.device_get(actions), dtype=np.float64)
-        if probs.ndim != 2 or allocations.ndim != 2:
-            raise ValueError("regime probabilities and actions must be rank-2 arrays.")
-        probability_metrics = {
-            f"state_{index}_probability": probability
-            for index, probability in enumerate(np.mean(probs, axis=0))
-        }
-        self.log_scalars(probability_metrics, step, prefix)
-        weights = probs[:, :, None]
-        denominators = np.sum(probs, axis=0)
-        by_regime = np.divide(
-            np.sum(weights * allocations[:, None, :], axis=0),
-            denominators[:, None],
-            out=np.zeros((probs.shape[1], allocations.shape[1]), dtype=np.float64),
-            where=denominators[:, None] > 0.0,
-        )
-        allocation_metrics = {
-            f"state_{regime_index}_asset_{asset_index}_allocation": value
-            for regime_index, row in enumerate(by_regime)
-            for asset_index, value in enumerate(row)
-        }
-        self.log_scalars(allocation_metrics, step, prefix)
-
     def close(self) -> None:
         """Flush and close the writer."""
 

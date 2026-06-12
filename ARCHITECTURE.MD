@@ -5,11 +5,9 @@
 Develop an open-source, AI-native quantitative trading framework that combines:
 
 * JAX-native GPU execution
-* Regime-aware reinforcement learning
+* Asset-only reinforcement learning
 * LSTM temporal representation learning
-* Cross-asset attention
 * Hawkes-process features
-* Spectral market features
 * Public market data
 * PPO portfolio optimization
 
@@ -37,6 +35,8 @@ Target deployment:
 * Amihud illiquidity
 * Dollar volume
 * Turnover
+* Liquidity deterioration
+* Liquidity shock
 
 ### Volume
 
@@ -71,9 +71,10 @@ Target deployment:
 
 ## Spectral Features
 
-* Volume eigenspectrum
-* Liquidity eigenspectrum
-* Sector flow indicators
+Spectral feature artifacts are not part of the active PPO state.
+
+Compatibility tables may retain empty or placeholder spectral outputs for reporting
+interfaces, but PPO must not depend on spectral features.
 
 ---
 
@@ -86,6 +87,49 @@ Shape:
 (60, 100, F_asset)
 
 60 trading-day lookback.
+
+---
+
+## Explicit Score-Head Feature Routing
+
+The learned score heads must use explicit allowlists, not prefix matching.
+
+The accumulation MLP receives exactly these columns, in this order:
+
+1. acc_price_drift
+2. acc_liquidity_growth
+3. acc_vol_compression
+4. acc_low_vol
+5. acc_macd_improvement
+6. acc_klinger_improvement
+7. acc_macd_bullish_hist
+8. acc_klinger_bullish_hist
+9. acc_macd_early
+10. acc_klinger_early
+
+Shape entering the accumulation MLP:
+
+(B, L, N, 10)
+
+The liquidity-exit MLP receives exactly these columns, in this order:
+
+1. liq_amihud_trend
+2. liq_liquidity_deterioration
+3. liq_klinger_deterioration
+4. liq_vol_expansion
+5. liq_liquidity_shock
+
+Shape entering the liquidity-exit MLP:
+
+(B, L, N, 5)
+
+Routing rules:
+
+* Feature names are selected from explicit allowlists.
+* Missing required columns raise ValueError.
+* Selected feature names are converted to integer indices before entering JAX/Flax.
+* Diagnostic metadata stores both selected feature names and selected indices.
+* Prefix-only routing is prohibited for score-head inputs.
 
 ---
 
@@ -103,96 +147,24 @@ Output:
 
 ---
 
-## Cross-Asset Modeling
+## Score Heads
 
-Cross-Asset Self-Attention
+Two learned MLP score heads operate on explicit asset feature slices:
 
-Output:
+* Accumulation score head
+* Liquidity-exit score head
 
-(100, 64)
+The scalar scores are concatenated back onto the full asset feature window before
+the shared LSTM.
 
----
+The active PPO pipeline has a single trainable encoder path. PPO stores raw asset
+windows in rollouts and recomputes encoder outputs during updates so gradients
+flow through:
 
-## Aggregation
-
-Attention Pooling
-
-Output:
-
-(64)
-
----
-
-## Macro Encoder
-
-Macro LSTM
-
-Hidden size:
-
-16
-
-Output:
-
-(16)
-
----
-
-## Fusion
-
-Inputs:
-
-* Asset embedding (64)
-* Macro embedding (16)
-* Spectral features (20)
-
-Concatenate:
-
-(100)
-
-Fusion MLP:
-
-100
-→ 64
-→ 32
-
-Market state:
-
-φ_t ∈ R^32
-
----
-
-# Regime Detection
-
-Model:
-
-Gaussian Hidden Markov Model
-
-Configuration:
-
-* Diagonal covariance
-* Default: 4 states
-* Configurable
-
-Input:
-
-φ_t
-
-Output:
-
-Posterior regime probabilities:
-
-p(k_t)
-
-Training schedule:
-
-* Annual retraining
-* 10-year rolling window
-
-Only filtering probabilities may be used:
-
-P(k_t | x_1:t)
-
-Forward-backward smoothing is prohibited.
+* Score heads
+* Shared LSTM
+* Actor
+* Critic
 
 ---
 
@@ -200,7 +172,11 @@ Forward-backward smoothing is prohibited.
 
 ## State
 
-s_t = (φ_t, p(k_t), C_t)
+s_t = (E_t, C_t)
+
+E_t is the per-asset embedding matrix from the asset encoder:
+
+(100, 64)
 
 Portfolio context C_t contains:
 
@@ -243,31 +219,34 @@ Long-only.
 
 Input:
 
-State vector
+* Per-asset embeddings
+* Portfolio context
 
 Architecture:
 
-140
-→ 128
-→ 128
-→ 101 logits
+Configurable MLP over asset embeddings and portfolio context.
+
+Output:
+
+101 logits
 
 Portfolio construction:
 
-Temperature Softmax
-
-Temperature is configurable.
+Long-only simplex action distribution.
 
 ---
 
 ## Critic
 
-Architecture:
+Input:
 
-140
-→ 128
-→ 64
-→ 1
+* Mean-pooled asset embeddings
+* Max-pooled asset embeddings
+* Portfolio context
+
+Output:
+
+Scalar value estimate
 
 ---
 
@@ -279,7 +258,6 @@ Friday close:
 
 * Compute features
 * Build state
-* Infer regime probabilities
 * Generate action
 
 No trading occurs.
@@ -352,7 +330,16 @@ DD_t = 1 - V_t / V_peak
 
 Default reward:
 
-r_t = log(1 + R_net) - log(1 + R_SPY) - λ_DD max(0, DD_t - DD_max) - λ_TO TO_t
+r_t = log(1 + R_net) - log(1 + R_SPY)
+
+Optional penalties may be enabled by configuration:
+
+* Drawdown penalty
+* Sortino downside penalty
+* Turnover penalty
+* Active risk penalty
+
+Default penalty weights are zero.
 
 Reward functions must be fully pluggable.
 
@@ -384,9 +371,9 @@ Test: 2020
 Train: 2011-2020
 Test: 2021
 
-Policy is frozen during test periods.
+Evaluation uses the train-fitted policy parameters for each split.
 
-No online learning during evaluation.
+No online learning or parameter updates occur during evaluation.
 
 ---
 
@@ -421,10 +408,10 @@ Required benchmarks:
 
 Required ablations:
 
-* PPO without HMM
 * PPO without Hawkes features
-* PPO without Spectral features
-* PPO without Cross-Asset Attention
+* PPO without learned score heads
+* PPO without selected accumulation inputs
+* PPO without selected liquidity-exit inputs
 
 ---
 
@@ -436,9 +423,8 @@ Implementation order:
 2. Feature engine
 3. Trading environment
 4. Benchmark strategies
-5. HMM
-6. Encoder
-7. PPO
-8. Walk-forward engine
+5. Encoder
+6. PPO
+7. Walk-forward engine
 
 Do not change architectural assumptions without explicit approval.

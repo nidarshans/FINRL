@@ -58,6 +58,15 @@ def build_spectral_figure(
         if missing:
             raise ValueError(f"Missing spectral columns: {sorted(missing)}")
         selected_columns = list(value_columns)
+    if not selected_columns:
+        return px.line(
+            pl.DataFrame({"decision_date": [], "value": [], "spectral_feature": []}),
+            x="decision_date",
+            y="value",
+            color="spectral_feature",
+            title="Spectral Feature Evolution",
+            template="plotly_white",
+        )
     long = result.spectral_features.unpivot(
         index=["decision_date", "split_index"],
         on=selected_columns,
@@ -121,7 +130,17 @@ def build_regime_portfolio_figure(result: WalkForwardResult):
         if column not in id_columns
     ]
     if not regime_columns:
-        raise ValueError("No regime probability columns are available.")
+        fig = make_subplots(rows=1, cols=1)
+        fig.add_trace(
+            go.Scatter(
+                x=result.portfolio_curve["decision_date"],
+                y=result.portfolio_curve["equity"],
+                mode="lines",
+                name="Portfolio",
+            )
+        )
+        fig.update_layout(template="plotly_white", title="Portfolio Equity")
+        return fig
 
     probabilities = result.regime_probabilities.select(regime_columns)
     dates = result.regime_probabilities["decision_date"]

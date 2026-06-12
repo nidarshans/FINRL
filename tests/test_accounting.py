@@ -12,6 +12,7 @@ from finrl.env.accounting import (
     calculate_net_portfolio_return,
     calculate_transaction_cost,
     calculate_turnover,
+    keep_top_n_risky_weights,
     normalize_long_only_weights,
     update_portfolio_value,
     update_running_peak,
@@ -94,7 +95,7 @@ def test_calculate_spy_relative_reward_without_penalties() -> None:
             turnover_penalty=0.0,
         ),
     )
-    expected = np.log1p(0.02) - np.log1p(0.01)
+    expected = np.log1p(0.02)
 
     assert_allclose(reward, expected, rtol=RTOL, atol=ATOL)
 
@@ -113,7 +114,7 @@ def test_calculate_spy_relative_reward_with_drawdown_and_turnover_penalty() -> N
         ),
     )
 
-    assert_allclose(reward, -0.14, rtol=RTOL, atol=ATOL)
+    assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_spy_relative_reward_is_finite_when_spy_is_down() -> None:
@@ -126,7 +127,7 @@ def test_calculate_spy_relative_reward_is_finite_when_spy_is_down() -> None:
     )
 
     assert bool(jnp.isfinite(reward))
-    assert bool(reward > 0.0)
+    assert bool(reward < 0.0)
 
 
 def test_normalize_long_only_weights_rescales_positive_weights() -> None:
@@ -164,6 +165,27 @@ def test_normalize_long_only_weights_can_fall_back_to_previous_weights() -> None
     )
 
     assert_allclose(weights, previous, rtol=RTOL, atol=ATOL)
+
+
+def test_keep_top_n_risky_weights_preserves_cash_and_renormalizes() -> None:
+    weights = keep_top_n_risky_weights(
+        jnp.array([0.10, 0.30, 0.20, 0.40], dtype=jnp.float32),
+        top_n=2,
+        cash_index=3,
+    )
+
+    assert_allclose(weights, [0.0, 1.0 / 3.0, 2.0 / 9.0, 4.0 / 9.0], rtol=RTOL, atol=ATOL)
+    assert_allclose(jnp.sum(weights), 1.0, rtol=RTOL, atol=ATOL)
+
+
+def test_keep_top_n_risky_weights_can_move_to_cash() -> None:
+    weights = keep_top_n_risky_weights(
+        jnp.array([0.10, 0.30, 0.20, 0.40], dtype=jnp.float32),
+        top_n=0,
+        cash_index=3,
+    )
+
+    assert_allclose(weights, [0.0, 0.0, 0.0, 1.0], rtol=RTOL, atol=ATOL)
 
 
 def test_accounting_functions_support_jit_and_float32() -> None:

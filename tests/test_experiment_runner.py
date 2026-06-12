@@ -19,9 +19,8 @@ from finrl.experiments import (
 )
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.features.schema import FeatureBundle
-from finrl.models.flax_encoder import ProductionEncoderConfig
+from finrl.models.asset_encoder import ProductionEncoderConfig
 from finrl.ppo.flax_policy import ProductionPPOConfig
-from finrl.regimes.schema import HMMConfig
 
 
 def _synthetic_dates() -> tuple[date, ...]:
@@ -42,8 +41,8 @@ def synthetic_experiment_data() -> RawExperimentData:
                 {
                     "date": day,
                     "ticker": ticker,
-                    "asset_return": 0.01 * (day_index + 1 + ticker_index),
-                    "asset_rank": 0.25 + 0.5 * ticker_index,
+                    "acc_return": 0.01 * (day_index + 1 + ticker_index),
+                    "liq_rank": 0.25 + 0.5 * ticker_index,
                 }
             )
     asset = pl.DataFrame(asset_rows).with_columns(pl.col("date").cast(pl.Date))
@@ -72,7 +71,7 @@ def synthetic_experiment_data() -> RawExperimentData:
         spectral_features=spectral,
         decision_dates=dates,
         tickers=tickers,
-        asset_feature_columns=("asset_return", "asset_rank"),
+        asset_feature_columns=("acc_return", "liq_rank"),
         macro_feature_columns=("macro_rate",),
         spectral_feature_columns=spectral_columns,
     )
@@ -101,19 +100,10 @@ def synthetic_experiment_config(enable_ppo: bool = False) -> ExperimentConfig:
             lookback=3,
             n_assets=2,
             asset_feature_dim=2,
-            macro_feature_dim=1,
-            spectral_feature_dim=20,
             asset_hidden_dim=8,
-            macro_hidden_dim=4,
-            attention_heads=2,
         ),
-        hmm=HMMConfig(n_states=2, max_iter=5),
         production_ppo=ProductionPPOConfig(
-            phi_dim=8,
             asset_latent_dim=8,
-            macro_dim=4,
-            spectral_dim=20,
-            n_regimes=2,
             n_assets=3,
             actor_hidden_dims=(8,),
             critic_hidden_dims=(8,),
@@ -140,8 +130,8 @@ def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
     assert "equity" in result.portfolio_curve.columns
     assert "equity" in result.spy_curve.columns
     assert {"AAA", "BBB", "CASH"}.issubset(result.allocations.columns)
-    assert {"regime_0", "regime_1"}.issubset(result.regime_probabilities.columns)
-    assert "spectral_0" in result.spectral_features.columns
+    assert set(result.regime_probabilities.columns) == {"decision_date", "split_index"}
+    assert set(result.spectral_features.columns) == {"decision_date", "split_index"}
     allocation_sums = result.allocations.select((pl.col("AAA") + pl.col("BBB") + pl.col("CASH")).alias("total"))
     assert allocation_sums.get_column("total").to_list() == [1.0] * result.allocations.height
 
@@ -155,13 +145,13 @@ def test_reporting_helpers_create_plotly_figures_and_metrics_frame() -> None:
     performance_fig = build_performance_figure(result)
     allocation_fig = build_allocation_figure(result, top_n=2)
     regime_fig = build_regime_portfolio_figure(result)
-    spectral_fig = build_spectral_figure(result, value_columns=("spectral_0", "spectral_1"))
+    spectral_fig = build_spectral_figure(result)
     metrics = metrics_to_frame(result)
 
     assert len(performance_fig.data) == 2
     assert len(allocation_fig.data) == 2
-    assert len(regime_fig.data) == 5
-    assert len(spectral_fig.data) == 2
+    assert len(regime_fig.data) == 1
+    assert len(spectral_fig.data) == 0
     assert metrics.height == 2
     assert "spy_cumulative_return" in metrics.columns
 

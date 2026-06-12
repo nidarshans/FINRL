@@ -36,6 +36,9 @@ def add_asset_relative_features(features: pl.DataFrame) -> pl.DataFrame:
     ranked = cross_sectional_percentile_rank(
         ranked, "dollar_volume", "dollar_volume_percentile_rank"
     )
-    return cross_sectional_percentile_rank(
-        ranked, "amihud_illiquidity", "amihud_percentile_rank"
+    amihud_column = (
+        "liq_amihud_illiquidity"
+        if "liq_amihud_illiquidity" in ranked.columns
+        else "amihud_illiquidity"
     )
+    return cross_sectional_percentile_rank(ranked, amihud_column, "amihud_percentile_rank")

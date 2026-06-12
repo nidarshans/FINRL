@@ -12,6 +12,12 @@ from finrl.features.asset import (
     compute_volume_acceleration,
     compute_volume_momentum,
 )
+from finrl.features.columns import (
+    ACCUMULATION_FEATURE_COLUMNS,
+    LIQUIDITY_EXIT_FEATURE_COLUMNS,
+    FeatureRoutingMetadata,
+    selected_feature_indices,
+)
 from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
 from finrl.features.pipeline import build_feature_bundle
@@ -25,17 +31,14 @@ from finrl.features.preprocessing import (
 )
 from finrl.features.relative import cross_sectional_percentile_rank
 from finrl.features.schema import FeatureBundle, FeatureConfig
-from finrl.features.spectral import (
-    compute_liquidity_eigenspectrum,
-    compute_sector_flow_indicators,
-    compute_spectral_features,
-    compute_volume_eigenspectrum,
-)
 
 __all__ = [
     "FeatureBundle",
     "FeatureConfig",
+    "FeatureRoutingMetadata",
     "FittedPreprocessor",
+    "ACCUMULATION_FEATURE_COLUMNS",
+    "LIQUIDITY_EXIT_FEATURE_COLUMNS",
     "PreprocessedSplit",
     "PreprocessingConfig",
     "build_feature_bundle",
@@ -43,20 +46,17 @@ __all__ = [
     "compute_asset_features",
     "compute_dollar_volume",
     "compute_hawkes_features",
-    "compute_liquidity_eigenspectrum",
     "compute_macd",
     "compute_macro_features",
     "compute_returns",
     "compute_rsi",
-    "compute_sector_flow_indicators",
-    "compute_spectral_features",
     "compute_trend_slope",
     "compute_turnover_feature",
     "compute_volume_acceleration",
-    "compute_volume_eigenspectrum",
     "compute_volume_momentum",
     "cross_sectional_percentile_rank",
     "fit_preprocessors",
     "fit_transform_train_transform_test",
+    "selected_feature_indices",
     "transform_features",
 ]

@@ -13,6 +13,7 @@ from finrl.env.accounting import (
     calculate_net_portfolio_return,
     calculate_transaction_cost,
     calculate_turnover,
+    keep_top_n_risky_weights,
     normalize_long_only_weights,
     update_portfolio_value,
     update_running_peak,
@@ -34,6 +35,7 @@ class EnvConfig(NamedTuple):
     sortino_target_return: float = 0.0
     sortino_downside_penalty: float = 0.0
     cash_index: int = -1
+    top_n_positions: int | None = None
 
 
 class EnvState(NamedTuple):
@@ -72,6 +74,12 @@ def environment_step(
         fallback_weights=state.weights,
         cash_index=config.cash_index,
     )
+    if config.top_n_positions is not None:
+        executed_weights = keep_top_n_risky_weights(
+            executed_weights,
+            config.top_n_positions,
+            cash_index=config.cash_index,
+        )
     turnover = calculate_turnover(state.weights, executed_weights)
     transaction_cost = calculate_transaction_cost(
         turnover, config.transaction_cost_rate

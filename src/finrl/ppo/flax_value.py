@@ -25,10 +25,6 @@ class PortfolioCriticFlax(nn.Module):
             [
                 mean_pool,
                 max_pool,
-                state.market_vector,
-                state.macro_state,
-                state.spectral_state,
-                state.regime_probs,
                 state.prev_weights,
                 jnp.atleast_1d(state.drawdown),
                 jnp.atleast_1d(state.prev_turnover),

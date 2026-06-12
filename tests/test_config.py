@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from finrl.config import ProjectConfig
+from finrl.features.schema import FeatureConfig
 
 
 def test_default_asset_dimension_includes_cash() -> None:
@@ -32,3 +33,12 @@ def test_project_config_is_immutable() -> None:
 
     with pytest.raises(FrozenInstanceError):
         config.num_stocks = 50  # type: ignore[misc]
+
+
+def test_feature_config_default_trailing_windows() -> None:
+    config = FeatureConfig()
+
+    assert config.accumulation_window == 40
+    assert config.realized_vol_window == 20
+    assert config.low_vol_window == 120
+    assert config.liquidity_ratio_window == 60

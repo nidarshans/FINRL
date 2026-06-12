@@ -79,3 +79,28 @@ def normalize_long_only_weights(
         else jnp.asarray(fallback_weights, dtype=raw_weights.dtype)
     )
     return jnp.where((total > 0.0) & finite, clipped / total, fallback)
+
+
+def keep_top_n_risky_weights(
+    weights: Array,
+    top_n: int | Array,
+    cash_index: int = -1,
+) -> Array:
+    """Keep the largest ``top_n`` risky weights, preserve cash, and renormalize."""
+
+    n_assets = weights.shape[0]
+    resolved_cash_index = jnp.where(
+        jnp.asarray(cash_index) >= 0,
+        jnp.asarray(cash_index),
+        n_assets + jnp.asarray(cash_index),
+    )
+    risky_mask = jnp.ones((n_assets,), dtype=bool).at[resolved_cash_index].set(False)
+    risky_weights = jnp.where(risky_mask, weights, -jnp.inf)
+    order = jnp.argsort(risky_weights, descending=True)
+    ranks = jnp.empty((n_assets,), dtype=jnp.int32).at[order].set(
+        jnp.arange(n_assets, dtype=jnp.int32)
+    )
+    keep_mask = risky_mask & (ranks < jnp.asarray(top_n, dtype=jnp.int32))
+    keep_mask = keep_mask.at[resolved_cash_index].set(True)
+    sparse = jnp.where(keep_mask, weights, 0.0)
+    return normalize_long_only_weights(sparse, cash_index=cash_index)

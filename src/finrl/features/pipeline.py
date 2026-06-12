@@ -11,7 +11,6 @@ from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
 from finrl.features.relative import add_asset_relative_features
 from finrl.features.schema import FeatureBundle, FeatureConfig
-from finrl.features.spectral import compute_spectral_features
 
 
 def _decision_dates_from_calendar(calendar: pl.DataFrame) -> pl.Series:
@@ -39,6 +38,13 @@ def _filter_to_decision_dates(features: pl.DataFrame, decision_dates: pl.Series)
     return features.join(decision_frame, on="date", how="inner").sort("date")
 
 
+def _dummy_spectral_features(dates: pl.Series, dim: int) -> pl.DataFrame:
+    columns = {f"spectral_{index}": [0.0] * len(dates) for index in range(dim)}
+    return pl.DataFrame({"date": dates.to_list(), **columns}).with_columns(
+        pl.col("date").cast(pl.Date)
+    )
+
+
 def build_feature_bundle(
     raw_data: MarketDataBundle,
     config: FeatureConfig,
@@ -53,12 +59,8 @@ def build_feature_bundle(
         asset_features = asset_features.join(hawkes, on=["date", "ticker"], how="left")
 
     macro_features = compute_macro_features(raw_data.macro)
-    spectral_features = compute_spectral_features(
-        asset_features,
-        lookback=config.spectral_window,
-        spectral_dim=config.spectral_dim,
-    )
     decision_dates = _decision_dates_from_calendar(raw_data.calendar)
+    spectral_features = _dummy_spectral_features(decision_dates, config.spectral_dim)
     asset_features = _filter_to_decision_dates(asset_features, decision_dates)
     spectral_features = _filter_to_decision_dates(spectral_features, decision_dates)
     if "date" in macro_features.columns:

@@ -19,11 +19,7 @@ class ProductionPPOConfig:
     universe plus cash, use ``n_assets=101``.
     """
 
-    phi_dim: int = 64
     asset_latent_dim: int = 64
-    macro_dim: int = 16
-    spectral_dim: int = 20
-    n_regimes: int = 4
     n_assets: int = 101
     actor_hidden_dims: tuple[int, int] = (128, 128)
     critic_hidden_dims: tuple[int, int] = (128, 64)
@@ -58,19 +54,15 @@ class ProductionPPOConfig:
         """Return explicit context plus previous portfolio dimensions."""
 
         return (
-            self.phi_dim
-            + self.macro_dim
-            + self.spectral_dim
-            + self.n_regimes
-            + self.action_dim
+            self.action_dim
             + 2
         )
 
     def __post_init__(self) -> None:
-        if self.phi_dim <= 0 or self.n_regimes <= 0 or self.n_assets <= 0:
+        if self.n_assets <= 0:
             raise ValueError("PPO dimensions must be positive.")
-        if self.asset_latent_dim <= 0 or self.macro_dim <= 0 or self.spectral_dim <= 0:
-            raise ValueError("latent and context dimensions must be positive.")
+        if self.asset_latent_dim <= 0:
+            raise ValueError("asset_latent_dim must be positive.")
         if not self.actor_hidden_dims or not self.critic_hidden_dims:
             raise ValueError("actor and critic hidden dimensions cannot be empty.")
         if any(hidden_dim <= 0 for hidden_dim in self.actor_hidden_dims):
@@ -120,10 +112,6 @@ class PPOState(NamedTuple):
     """
 
     asset_embeddings: Array
-    market_vector: Array
-    macro_state: Array
-    spectral_state: Array
-    regime_probs: Array
     prev_weights: Array
     drawdown: Array
     prev_turnover: Array
@@ -139,14 +127,7 @@ class PortfolioActorFlax(nn.Module):
         """Return logits for `N + 1` tradable assets."""
 
         n_risky_assets = self.config.n_assets - 1
-        context = build_allocation_context(
-            state.market_vector,
-            state.macro_state,
-            state.spectral_state,
-            state.regime_probs,
-            state.drawdown,
-            state.prev_turnover,
-        )
+        context = build_allocation_context(state.prev_weights, state.drawdown, state.prev_turnover)
         repeated_context = jnp.broadcast_to(context, (n_risky_assets, context.shape[-1]))
         asset_prev_weights = state.prev_weights[:n_risky_assets, None]
         asset_inputs = jnp.concatenate(
@@ -188,10 +169,6 @@ def actor_mean_weights(logits: Array, config: ProductionPPOConfig) -> Array:
 
 def build_structured_ppo_state(
     asset_embeddings: Array,
-    market_vector: Array,
-    macro_state: Array,
-    spectral_state: Array,
-    regime_probs: Array,
     prev_weights: Array,
     drawdown: Array,
     previous_turnover: Array,
@@ -200,10 +177,6 @@ def build_structured_ppo_state(
 
     return PPOState(
         asset_embeddings=jnp.asarray(asset_embeddings, dtype=jnp.float32),
-        market_vector=jnp.asarray(market_vector, dtype=jnp.float32),
-        macro_state=jnp.asarray(macro_state, dtype=jnp.float32),
-        spectral_state=jnp.asarray(spectral_state, dtype=jnp.float32),
-        regime_probs=jnp.asarray(regime_probs, dtype=jnp.float32),
         prev_weights=jnp.asarray(prev_weights, dtype=jnp.float32),
         drawdown=jnp.asarray(drawdown, dtype=jnp.float32),
         prev_turnover=jnp.asarray(previous_turnover, dtype=jnp.float32),
@@ -211,21 +184,15 @@ def build_structured_ppo_state(
 
 
 def build_allocation_context(
-    market_vector: Array,
-    macro_state: Array,
-    spectral_state: Array,
-    regime_probs: Array,
+    prev_weights: Array,
     drawdown: Array,
     previous_turnover: Array,
 ) -> Array:
-    """Concatenate the global allocation context from the architecture diagram."""
+    """Concatenate portfolio context used by asset-only PPO."""
 
     return jnp.concatenate(
         [
-            jnp.asarray(market_vector, dtype=jnp.float32),
-            jnp.asarray(macro_state, dtype=jnp.float32),
-            jnp.asarray(spectral_state, dtype=jnp.float32),
-            jnp.asarray(regime_probs, dtype=jnp.float32),
+            jnp.asarray(prev_weights, dtype=jnp.float32),
             jnp.atleast_1d(jnp.asarray(drawdown, dtype=jnp.float32)),
             jnp.atleast_1d(jnp.asarray(previous_turnover, dtype=jnp.float32)),
         ],

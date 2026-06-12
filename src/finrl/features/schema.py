@@ -16,8 +16,16 @@ class FeatureConfig:
     trend_window: int = 20
     liquidity_window: int = 20
     volume_window: int = 20
+    accumulation_window: int = 40
+    realized_vol_window: int = 20
+    low_vol_window: int = 120
+    liquidity_ratio_window: int = 60
+    klinger_fast_span: int = 34
+    klinger_slow_span: int = 55
+    klinger_signal_span: int = 13
     spectral_window: int = 20
     spectral_dim: int = 20
+    use_spectral_features: bool = False
     include_hawkes: bool = False
 
 

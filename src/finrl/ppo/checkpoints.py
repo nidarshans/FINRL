@@ -15,15 +15,13 @@ def _pack_checkpoint(checkpoint: Any) -> Any:
     return {
         "kind": "production_ppo_train_state",
         "config": checkpoint.config,
-        "actor": {
-            "step": checkpoint.actor.step,
-            "params": checkpoint.actor.params,
-            "opt_state": checkpoint.actor.opt_state,
-        },
-        "critic": {
-            "step": checkpoint.critic.step,
-            "params": checkpoint.critic.params,
-            "opt_state": checkpoint.critic.opt_state,
+        "encoder_config": checkpoint.encoder_config,
+        "accumulation_indices": checkpoint.accumulation_indices,
+        "liquidity_indices": checkpoint.liquidity_indices,
+        "policy": {
+            "step": checkpoint.policy.step,
+            "params": checkpoint.policy.params,
+            "opt_state": checkpoint.policy.opt_state,
         },
     }
 
@@ -41,19 +39,20 @@ def _unpack_checkpoint(payload: Any) -> Any:
     state = initialize_ppo_train_state(
         rng=jax.random.PRNGKey(0),
         config=payload["config"],
+        encoder_config=payload["encoder_config"],
+        accumulation_indices=tuple(payload["accumulation_indices"]),
+        liquidity_indices=tuple(payload["liquidity_indices"]),
     )
     return type(state)(
-        actor=state.actor.replace(
-            step=payload["actor"]["step"],
-            params=payload["actor"]["params"],
-            opt_state=payload["actor"]["opt_state"],
-        ),
-        critic=state.critic.replace(
-            step=payload["critic"]["step"],
-            params=payload["critic"]["params"],
-            opt_state=payload["critic"]["opt_state"],
+        policy=state.policy.replace(
+            step=payload["policy"]["step"],
+            params=payload["policy"]["params"],
+            opt_state=payload["policy"]["opt_state"],
         ),
         config=payload["config"],
+        encoder_config=payload["encoder_config"],
+        accumulation_indices=tuple(payload["accumulation_indices"]),
+        liquidity_indices=tuple(payload["liquidity_indices"]),
     )
 
 
