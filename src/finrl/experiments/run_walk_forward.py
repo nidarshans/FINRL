@@ -21,6 +21,15 @@ from finrl.backtest.walk_forward import (
     generate_walk_forward_splits,
     slice_feature_bundle,
 )
+from finrl.dpo_jax import (
+    DPOBatch,
+    DPOTrainState,
+    build_dpo_batch,
+    predict_weights,
+    train_dpo,
+    initialize_dpo_train_state,
+)
+from finrl.dpo_jax.losses import DPOLossMetrics
 from finrl.env.trading_env import EnvState, scan_environment
 from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
 from finrl.experiments.config import ExperimentConfig
@@ -190,6 +199,33 @@ def fit_ppo_train_artifacts(
     )
 
 
+def fit_dpo_train_artifacts(
+    train_windows: LookbackWindows,
+    train_returns: np.ndarray,
+    config: ExperimentConfig,
+    split_index: int = 0,
+    feature_routing: FeatureRoutingMetadata | None = None,
+) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
+    """Fit direct portfolio optimization from raw asset windows."""
+
+    routing = feature_routing or selected_feature_indices(train_windows.asset_feature_columns)
+    encoder_config = _asset_only_encoder_config(train_windows, config)
+    dpo_state = initialize_dpo_train_state(
+        jax.random.PRNGKey(config.seed + split_index),
+        config.dpo,
+        encoder_config,
+        routing.accumulation_indices,
+        routing.liquidity_exit_indices,
+    )
+    initial_weights = jnp.zeros((train_returns.shape[1],), dtype=jnp.float32).at[-1].set(1.0)
+    batch = build_dpo_batch(
+        jnp.asarray(train_windows.asset, dtype=jnp.float32),
+        jnp.asarray(train_returns[:, :-1], dtype=jnp.float32),
+        initial_weights=initial_weights,
+    )
+    return train_dpo(dpo_state, batch)
+
+
 def evaluate_production_policy(
     policy_state: ProductionPPOTrainState,
     test_windows: LookbackWindows,
@@ -209,6 +245,40 @@ def evaluate_production_policy(
         config.env,
         jax.random.PRNGKey(config.seed + split_index + 10_000),
         rollout_length=test_windows.asset.shape[0],
+    )
+
+
+def evaluate_dpo_policy(
+    policy_state: DPOTrainState,
+    test_windows: LookbackWindows,
+    test_returns: np.ndarray,
+    test_spy: np.ndarray,
+    config: ExperimentConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate a frozen DPO policy through the trading environment."""
+
+    initial_weights = jnp.zeros((test_returns.shape[1],), dtype=jnp.float32).at[-1].set(1.0)
+    batch = DPOBatch(
+        asset_windows=jnp.asarray(test_windows.asset, dtype=jnp.float32),
+        asset_returns=jnp.asarray(test_returns[:, :-1], dtype=jnp.float32),
+        previous_weights=jnp.repeat(initial_weights[None, :], test_returns.shape[0], axis=0),
+        drawdowns=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
+        previous_turnovers=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
+        initial_weights=initial_weights,
+    )
+    actions = predict_weights(policy_state, batch)
+    _, step_results = scan_environment(
+        _initial_env_state(test_returns.shape[1]),
+        actions,
+        jnp.asarray(test_returns, dtype=jnp.float32),
+        jnp.asarray(test_spy, dtype=jnp.float32),
+        config.env,
+    )
+    return (
+        np.asarray(step_results.net_return),
+        np.asarray(step_results.turnover),
+        np.asarray(step_results.transaction_cost),
+        np.asarray(actions),
     )
 
 
@@ -257,6 +327,8 @@ def fit_train_artifacts(
     feature_routing = None
     production_ppo_training = None
     production_policy_state = None
+    dpo_policy_state = None
+    dpo_train_metrics = None
     if config.enable_ppo:
         feature_routing = selected_feature_indices(train_windows.asset_feature_columns)
         production_ppo_training = fit_ppo_train_artifacts(
@@ -269,6 +341,15 @@ def fit_train_artifacts(
             feature_routing,
         )
         production_policy_state = production_ppo_training.train_state
+    elif config.enable_dpo:
+        feature_routing = selected_feature_indices(train_windows.asset_feature_columns)
+        dpo_policy_state, dpo_train_metrics = fit_dpo_train_artifacts(
+            train_windows,
+            train_returns,
+            config,
+            split_index,
+            feature_routing,
+        )
     return ExperimentArtifacts(
         split=split,
         preprocessor=preprocessed.preprocessor,
@@ -278,6 +359,8 @@ def fit_train_artifacts(
         feature_routing=feature_routing,
         production_ppo_training=production_ppo_training,
         production_policy_state=production_policy_state,
+        dpo_policy_state=dpo_policy_state,
+        dpo_train_metrics=dpo_train_metrics,
     )
 
 
@@ -327,6 +410,16 @@ def evaluate_test_split(
         turnovers = np.asarray(production_evaluation.rollout.step_results.turnover)
         costs = np.asarray(production_evaluation.rollout.step_results.transaction_cost)
         actions = np.asarray(production_evaluation.rollout.batch.actions)
+    elif config.enable_dpo:
+        if frozen_artifacts.dpo_policy_state is None:
+            raise ValueError("DPO evaluation requires a policy state.")
+        portfolio_returns, turnovers, costs, actions = evaluate_dpo_policy(
+            frozen_artifacts.dpo_policy_state,
+            frozen_artifacts.test_windows,
+            test_returns,
+            test_spy,
+            config,
+        )
     else:
         actions = _environment_only_actions(test_returns.shape[0], test_returns.shape[1])
         _, step_results = scan_environment(
@@ -437,7 +530,7 @@ def run_split(
             experiment_name=f"split_{split_index}",
             enabled=config.output_dir is not None,
         )
-        if config.enable_ppo
+        if config.enable_ppo or config.enable_dpo
         else None
     )
     try:

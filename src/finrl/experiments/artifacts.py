@@ -12,6 +12,8 @@ from finrl.features.columns import FeatureRoutingMetadata
 from finrl.features.preprocessing import FittedPreprocessor
 from finrl.features.schema import FeatureBundle
 from finrl.models.windows import LookbackWindows
+from finrl.dpo_jax.losses import DPOLossMetrics
+from finrl.dpo_jax.trainer import DPOTrainState
 from finrl.ppo.flax_trainer import ProductionPPOTrainState, ProductionPPOTrainingResult
 
 
@@ -36,3 +38,5 @@ class ExperimentArtifacts:
     feature_routing: FeatureRoutingMetadata | None = None
     production_ppo_training: ProductionPPOTrainingResult | None = None
     production_policy_state: ProductionPPOTrainState | None = None
+    dpo_policy_state: DPOTrainState | None = None
+    dpo_train_metrics: tuple[DPOLossMetrics, ...] | None = None

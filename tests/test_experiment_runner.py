@@ -7,6 +7,7 @@ from datetime import date, timedelta
 import polars as pl
 
 from finrl.backtest.walk_forward import WalkForwardConfig, generate_walk_forward_splits
+from finrl.dpo_jax import DPOConfig
 from finrl.experiments import (
     ExperimentConfig,
     RawExperimentData,
@@ -16,6 +17,10 @@ from finrl.experiments import (
     build_spectral_figure,
     metrics_to_frame,
     run_walk_forward_experiment,
+)
+from finrl.features.columns import (
+    ACCUMULATION_FEATURE_COLUMNS,
+    LIQUIDITY_EXIT_FEATURE_COLUMNS,
 )
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.features.schema import FeatureBundle
@@ -34,6 +39,7 @@ def _synthetic_dates() -> tuple[date, ...]:
 def synthetic_experiment_data() -> RawExperimentData:
     dates = _synthetic_dates()
     tickers = ("AAA", "BBB")
+    dpo_feature_columns = (*ACCUMULATION_FEATURE_COLUMNS, *LIQUIDITY_EXIT_FEATURE_COLUMNS)
     asset_rows = []
     for day_index, day in enumerate(dates):
         for ticker_index, ticker in enumerate(tickers):
@@ -43,6 +49,10 @@ def synthetic_experiment_data() -> RawExperimentData:
                     "ticker": ticker,
                     "acc_return": 0.01 * (day_index + 1 + ticker_index),
                     "liq_rank": 0.25 + 0.5 * ticker_index,
+                    **{
+                        column: 0.001 * (day_index + 1) + 0.01 * ticker_index
+                        for column in dpo_feature_columns
+                    },
                 }
             )
     asset = pl.DataFrame(asset_rows).with_columns(pl.col("date").cast(pl.Date))
@@ -71,7 +81,7 @@ def synthetic_experiment_data() -> RawExperimentData:
         spectral_features=spectral,
         decision_dates=dates,
         tickers=tickers,
-        asset_feature_columns=("acc_return", "liq_rank"),
+        asset_feature_columns=("acc_return", "liq_rank", *dpo_feature_columns),
         macro_feature_columns=("macro_rate",),
         spectral_feature_columns=spectral_columns,
     )
@@ -92,14 +102,20 @@ def synthetic_experiment_data() -> RawExperimentData:
     return RawExperimentData(features=features, returns=returns, spy_returns=spy_returns)
 
 
-def synthetic_experiment_config(enable_ppo: bool = False) -> ExperimentConfig:
+def synthetic_experiment_config(
+    enable_ppo: bool = False,
+    enable_dpo: bool = False,
+) -> ExperimentConfig:
+    asset_feature_dim = 2 + len(ACCUMULATION_FEATURE_COLUMNS) + len(
+        LIQUIDITY_EXIT_FEATURE_COLUMNS
+    )
     return ExperimentConfig(
         walk_forward=WalkForwardConfig(train_years=1, test_years=1, step_years=1),
         preprocessing=PreprocessingConfig(rolling_window=2),
         production_encoder=ProductionEncoderConfig(
             lookback=3,
             n_assets=2,
-            asset_feature_dim=2,
+            asset_feature_dim=asset_feature_dim,
             asset_hidden_dim=8,
         ),
         production_ppo=ProductionPPOConfig(
@@ -111,7 +127,9 @@ def synthetic_experiment_config(enable_ppo: bool = False) -> ExperimentConfig:
             minibatch_size=2,
             learning_rate=1e-4,
         ),
+        dpo=DPOConfig(num_epochs=2, learning_rate=1e-3, batch_size=2),
         enable_ppo=enable_ppo,
+        enable_dpo=enable_dpo,
         seed=7,
         periods_per_year=6,
     )
@@ -165,3 +183,18 @@ def test_walk_forward_experiment_is_reproducible_for_fixed_seed() -> None:
 
     assert first.portfolio_curve.to_dicts() == second.portfolio_curve.to_dicts()
     assert first.spy_curve.to_dicts() == second.spy_curve.to_dicts()
+
+
+def test_walk_forward_experiment_runs_with_dpo_policy() -> None:
+    result = run_walk_forward_experiment(
+        synthetic_experiment_data(),
+        synthetic_experiment_config(enable_dpo=True),
+    )
+
+    assert len(result.split_results) == 2
+    assert result.portfolio_curve.height == result.spy_curve.height
+    assert {"AAA", "BBB", "CASH"}.issubset(result.allocations.columns)
+    allocation_sums = result.allocations.select(
+        (pl.col("AAA") + pl.col("BBB") + pl.col("CASH")).alias("total")
+    )
+    assert allocation_sums.get_column("total").to_list() == [1.0] * result.allocations.height

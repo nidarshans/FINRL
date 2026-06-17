@@ -7,6 +7,7 @@ from pathlib import Path
 
 from finrl.backtest.walk_forward import WalkForwardConfig
 from finrl.env.trading_env import EnvConfig
+from finrl.dpo_jax.config import DPOConfig
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.models.asset_encoder import ProductionEncoderConfig
 from finrl.ppo.flax_policy import ProductionPPOConfig
@@ -20,8 +21,10 @@ class ExperimentConfig:
     preprocessing: PreprocessingConfig = PreprocessingConfig()
     production_encoder: ProductionEncoderConfig = ProductionEncoderConfig()
     production_ppo: ProductionPPOConfig = ProductionPPOConfig()
+    dpo: DPOConfig = DPOConfig()
     env: EnvConfig = EnvConfig()
     enable_ppo: bool = True
+    enable_dpo: bool = False
     use_asset_only_ppo: bool = True
     seed: int = 0
     periods_per_year: int = 52
@@ -30,3 +33,5 @@ class ExperimentConfig:
     def __post_init__(self) -> None:
         if self.periods_per_year <= 0:
             raise ValueError("periods_per_year must be positive.")
+        if self.enable_ppo and self.enable_dpo:
+            raise ValueError("Only one learned policy mode can be enabled at a time.")
