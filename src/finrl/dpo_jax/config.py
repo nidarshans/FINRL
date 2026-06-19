@@ -19,4 +19,10 @@ class DPOConfig:
     lambda_drawdown: float = 0.10
     lambda_concentration: float = 0.01
 
+    allocation_activation: str = "sparsemax"
+
     eps: float = 1e-8
+
+    def __post_init__(self) -> None:
+        if self.allocation_activation not in {"softmax", "sparsemax"}:
+            raise ValueError("allocation_activation must be 'softmax' or 'sparsemax'.")

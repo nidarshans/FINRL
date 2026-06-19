@@ -14,6 +14,7 @@ from finrl.dpo_jax import (
     evaluate_dpo,
     initialize_dpo_train_state,
     predict_weights,
+    sparsemax,
     train_step,
 )
 from finrl.models.asset_encoder import AssetOnlyEncoderConfig
@@ -50,36 +51,75 @@ def _windows_returns() -> tuple[jax.Array, jax.Array]:
     return windows / 100.0, returns
 
 
-def test_direct_allocation_head_outputs_simplex_weights() -> None:
-    head = DirectAllocationHead(hidden_dim=8)
-    embeddings = jnp.ones((3, 2, 4), dtype=jnp.float32)
-    previous_weights = jnp.array(
-        [
-            [0.2, 0.3, 0.5],
-            [0.4, 0.1, 0.5],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=jnp.float32,
-    )
-    variables = head.init(
-        jax.random.PRNGKey(0),
-        embeddings,
-        previous_weights,
-        jnp.zeros((3, 1), dtype=jnp.float32),
-        jnp.zeros((3, 1), dtype=jnp.float32),
-    )
+def test_sparsemax_shape() -> None:
+    logits = jnp.ones((4, 11), dtype=jnp.float32)
+    weights = sparsemax(logits)
 
-    weights = head.apply(
-        variables,
-        embeddings,
-        previous_weights,
-        jnp.zeros((3, 1), dtype=jnp.float32),
-        jnp.zeros((3, 1), dtype=jnp.float32),
-    )
+    assert weights.shape == (4, 11)
+
+
+def test_sparsemax_sums_to_one() -> None:
+    logits = jnp.array([[3.0, 1.0, -2.0]], dtype=jnp.float32)
+    weights = sparsemax(logits)
+
+    assert_allclose(jnp.sum(weights, axis=-1), jnp.array([1.0], dtype=jnp.float32))
+
+
+def test_sparsemax_nonnegative() -> None:
+    logits = jnp.array([[3.0, 1.0, -2.0]], dtype=jnp.float32)
+    weights = sparsemax(logits)
+
+    assert bool(jnp.all(weights >= 0.0))
+
+
+def test_sparsemax_can_output_exact_zero() -> None:
+    logits = jnp.array([[5.0, 1.0, -10.0]], dtype=jnp.float32)
+    weights = sparsemax(logits)
+
+    assert weights[0, -1] == 0.0
+
+
+def test_direct_allocation_head_outputs_simplex_weights() -> None:
+    head = DirectAllocationHead(hidden_dim=8, allocation_activation="sparsemax")
+    embeddings = jnp.ones((3, 2, 4), dtype=jnp.float32)
+    variables = head.init(jax.random.PRNGKey(0), embeddings)
+
+    weights = head.apply(variables, embeddings)
 
     assert weights.shape == (3, 3)
-    assert_allclose(jnp.sum(weights, axis=-1), jnp.ones((3,)), rtol=1e-6)
+    assert_allclose(jnp.sum(weights, axis=-1), jnp.ones((3,)), atol=1e-5)
     assert bool(jnp.all(weights >= 0.0))
+
+
+def test_direct_allocation_head_shape() -> None:
+    batch_size, n_assets, embedding_dim = 4, 10, 16
+    embeddings = jnp.ones((batch_size, n_assets, embedding_dim), dtype=jnp.float32)
+    head = DirectAllocationHead(hidden_dim=32, allocation_activation="sparsemax")
+    variables = head.init(jax.random.PRNGKey(0), embeddings)
+
+    weights = head.apply(variables, embeddings)
+
+    assert weights.shape == (batch_size, n_assets + 1)
+
+
+def test_sparsemax_allocation_head_has_gradients() -> None:
+    batch_size, n_assets, embedding_dim = 4, 10, 16
+    embeddings = jnp.arange(
+        batch_size * n_assets * embedding_dim,
+        dtype=jnp.float32,
+    ).reshape(batch_size, n_assets, embedding_dim)
+    embeddings = embeddings / jnp.max(embeddings)
+    head = DirectAllocationHead(hidden_dim=32, allocation_activation="sparsemax")
+    variables = head.init(jax.random.PRNGKey(0), embeddings)
+
+    def loss_fn(params: dict[str, object]) -> jax.Array:
+        weights = head.apply({"params": params}, embeddings)
+        return jnp.sum(weights**2)
+
+    grads = jax.grad(loss_fn)(variables["params"])
+
+    assert grads is not None
+    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(grads))
 
 
 def test_dpo_loss_matches_simple_manual_accounting() -> None:
@@ -104,6 +144,17 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
     )
     assert_allclose(metrics.mean_turnover, jnp.array(1.0, dtype=jnp.float32), rtol=1e-6)
     assert_allclose(metrics.final_equity, expected_equity, rtol=1e-6)
+
+
+def test_dpo_loss_scalar() -> None:
+    n_steps, n_assets = 20, 10
+    weights = jnp.ones((n_steps, n_assets + 1), dtype=jnp.float32) / (n_assets + 1)
+    returns = jnp.zeros((n_steps, n_assets), dtype=jnp.float32)
+    initial_weights = jnp.zeros((n_assets + 1,), dtype=jnp.float32).at[-1].set(1.0)
+
+    loss, _metrics = dpo_loss(weights, returns, initial_weights, DPOConfig())
+
+    assert loss.shape == ()
 
 
 def test_dpo_train_step_updates_encoder_and_allocation_head() -> None:

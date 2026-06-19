@@ -56,7 +56,10 @@ def initialize_dpo_train_state(
         accumulation_indices=accumulation_indices,
         liquidity_indices=liquidity_indices,
     )
-    head = DirectAllocationHead(hidden_dim=head_hidden_dim)
+    head = DirectAllocationHead(
+        hidden_dim=head_hidden_dim,
+        allocation_activation=config.allocation_activation,
+    )
     example_windows = jnp.zeros(
         (
             1,
@@ -70,19 +73,11 @@ def initialize_dpo_train_state(
         {"params": encoder.init(encoder_key, example_windows)["params"]},
         example_windows,
     )
-    example_previous_weights = (
-        jnp.zeros((1, encoder_config.n_assets + 1), dtype=jnp.float32)
-        .at[:, -1]
-        .set(1.0)
-    )
     params = {
         "encoder": encoder.init(encoder_key, example_windows)["params"],
         "allocation_head": head.init(
             head_key,
             example_embeddings,
-            example_previous_weights,
-            jnp.zeros((1, 1), dtype=jnp.float32),
-            jnp.zeros((1, 1), dtype=jnp.float32),
         )["params"],
     }
     return DPOTrainState(
@@ -135,14 +130,14 @@ def train_step(state: DPOTrainState, batch: DPOBatch) -> tuple[DPOTrainState, DP
             accumulation_indices=state.accumulation_indices,
             liquidity_indices=state.liquidity_indices,
         )
-        head = DirectAllocationHead(hidden_dim=state.head_hidden_dim)
+        head = DirectAllocationHead(
+            hidden_dim=state.head_hidden_dim,
+            allocation_activation=state.config.allocation_activation,
+        )
         embeddings = encoder.apply({"params": params["encoder"]}, batch.asset_windows)
         weights = head.apply(
             {"params": params["allocation_head"]},
             embeddings,
-            batch.previous_weights,
-            batch.drawdowns,
-            batch.previous_turnovers,
         )
         return dpo_loss(weights, batch.asset_returns, batch.initial_weights, state.config)
 
