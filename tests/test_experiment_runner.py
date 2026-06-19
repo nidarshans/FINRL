@@ -12,6 +12,7 @@ from finrl.experiments import (
     ExperimentConfig,
     RawExperimentData,
     build_allocation_figure,
+    build_holdings_heatmap_granular,
     build_performance_figure,
     build_regime_portfolio_figure,
     build_spectral_figure,
@@ -162,12 +163,15 @@ def test_reporting_helpers_create_plotly_figures_and_metrics_frame() -> None:
 
     performance_fig = build_performance_figure(result)
     allocation_fig = build_allocation_figure(result, top_n=2)
+    heatmap_fig = build_holdings_heatmap_granular(result, top_n=2)
     regime_fig = build_regime_portfolio_figure(result)
     spectral_fig = build_spectral_figure(result)
     metrics = metrics_to_frame(result)
 
     assert len(performance_fig.data) == 2
     assert len(allocation_fig.data) == 2
+    assert len(heatmap_fig.data) == 1
+    assert heatmap_fig.layout.title.text == "Portfolio Holdings Over Time"
     assert len(regime_fig.data) == 1
     assert len(spectral_fig.data) == 0
     assert metrics.height == 2

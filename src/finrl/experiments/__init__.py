@@ -4,6 +4,7 @@ from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
 from finrl.experiments.config import ExperimentConfig
 from finrl.experiments.reporting import (
     build_allocation_figure,
+    build_holdings_heatmap_granular,
     build_performance_figure,
     build_regime_portfolio_figure,
     build_spectral_figure,
@@ -31,6 +32,7 @@ __all__ = [
     "SplitRunResult",
     "aggregate_walk_forward_results",
     "build_allocation_figure",
+    "build_holdings_heatmap_granular",
     "build_performance_figure",
     "build_regime_portfolio_figure",
     "build_spectral_figure",

@@ -117,6 +117,127 @@ def build_allocation_figure(
     )
 
 
+def build_holdings_heatmap_granular(
+    result: WalkForwardResult,
+    min_weight: float = 0.001,
+    top_n: int | None = None,
+    freq: str | None = None,
+    height_per_ticker: int = 35,
+    include_cash: bool = False,
+):
+    """Return a granular heatmap of portfolio weights over time."""
+
+    import plotly.graph_objects as go
+
+    if min_weight < 0.0:
+        raise ValueError("min_weight must be non-negative.")
+    if top_n is not None and top_n <= 0:
+        raise ValueError("top_n must be positive.")
+    if height_per_ticker <= 0:
+        raise ValueError("height_per_ticker must be positive.")
+
+    id_columns = {"decision_date", "split_index"}
+    asset_columns = [column for column in result.allocations.columns if column not in id_columns]
+    if not include_cash:
+        asset_columns = [column for column in asset_columns if column != "CASH"]
+    if not asset_columns:
+        return _empty_holdings_heatmap(height=600)
+
+    allocations = result.allocations.select(["decision_date", *asset_columns]).sort("decision_date")
+    if freq is not None:
+        allocations = (
+            allocations.group_by_dynamic(
+                "decision_date",
+                every=_plotly_resample_frequency(freq),
+            )
+            .agg(pl.all().exclude("decision_date").last())
+            .sort("decision_date")
+        )
+
+    active_columns = []
+    for column in asset_columns:
+        if bool(allocations.select((pl.col(column).abs() > min_weight).any()).item()):
+            active_columns.append(column)
+    if top_n is not None:
+        usage = allocations.select(
+            [pl.col(column).abs().sum().alias(column) for column in active_columns]
+        ).row(0, named=True)
+        active_columns = sorted(active_columns, key=lambda column: usage[column], reverse=True)[:top_n]
+    if not active_columns:
+        return _empty_holdings_heatmap(height=600)
+
+    weights = allocations.select(active_columns).to_numpy().T
+    dates = allocations.get_column("decision_date").to_list()
+    zmax = max(float(allocations.select(active_columns).max().max_horizontal().max()), 1e-9)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=weights,
+            x=dates,
+            y=active_columns,
+            zmin=0,
+            zmax=zmax,
+            colorbar={"title": "Weight"},
+            hovertemplate=(
+                "Date: %{x}<br>"
+                "Ticker: %{y}<br>"
+                "Weight: %{z:.2%}"
+                "<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        title="Portfolio Holdings Over Time",
+        xaxis_title="Date",
+        yaxis_title="Ticker",
+        height=max(600, height_per_ticker * len(active_columns)),
+        hovermode="closest",
+        template="plotly_white",
+        xaxis={
+            "rangeslider": {"visible": True},
+            "rangeselector": {
+                "buttons": [
+                    {"count": 1, "label": "1M", "step": "month", "stepmode": "backward"},
+                    {"count": 3, "label": "3M", "step": "month", "stepmode": "backward"},
+                    {"count": 6, "label": "6M", "step": "month", "stepmode": "backward"},
+                    {"count": 1, "label": "1Y", "step": "year", "stepmode": "backward"},
+                    {"step": "all", "label": "All"},
+                ]
+            },
+        },
+    )
+    return fig
+
+
+def _plotly_resample_frequency(freq: str) -> str:
+    """Map common pandas-style plot frequencies to Polars dynamic windows."""
+
+    mapping = {
+        "D": "1d",
+        "W": "1w",
+        "M": "1mo",
+        "ME": "1mo",
+        "Q": "3mo",
+        "QE": "3mo",
+        "Y": "1y",
+        "YE": "1y",
+    }
+    return mapping.get(freq.upper(), freq)
+
+
+def _empty_holdings_heatmap(height: int):
+    import plotly.graph_objects as go
+
+    fig = go.Figure(data=go.Heatmap(z=[], x=[], y=[]))
+    fig.update_layout(
+        title="Portfolio Holdings Over Time",
+        xaxis_title="Date",
+        yaxis_title="Ticker",
+        height=height,
+        template="plotly_white",
+    )
+    return fig
+
+
 def build_regime_portfolio_figure(result: WalkForwardResult):
     """Return a two-panel Plotly figure for portfolio equity and HMM regimes."""
 
@@ -263,5 +384,6 @@ def write_report(result: WalkForwardResult, output_dir: str | Path) -> None:
     result.spectral_features.write_csv(path / "spectral_features.csv")
     build_performance_figure(result).write_html(path / "performance_vs_spy.html")
     build_allocation_figure(result).write_html(path / "allocations.html")
+    build_holdings_heatmap_granular(result).write_html(path / "holdings_heatmap.html")
     build_regime_portfolio_figure(result).write_html(path / "regime_portfolio.html")
     build_spectral_figure(result).write_html(path / "spectral_features.html")
