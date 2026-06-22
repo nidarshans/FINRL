@@ -89,5 +89,5 @@ def test_encoder_score_head_slices_have_expected_shapes() -> None:
         routing.liquidity_exit_indices,
     )
 
-    assert accumulation.shape == (2, 4, 3, 10)
-    assert liquidity.shape == (2, 4, 3, 5)
+    assert accumulation.shape == (2, 4, 3, 11)
+    assert liquidity.shape == (2, 4, 3, 6)

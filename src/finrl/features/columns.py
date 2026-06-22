@@ -16,6 +16,7 @@ ACCUMULATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "acc_klinger_bullish_hist",
     "acc_macd_early",
     "acc_klinger_early",
+    "acc_momentum_quality",
 )
 
 LIQUIDITY_EXIT_FEATURE_COLUMNS: tuple[str, ...] = (
@@ -24,6 +25,7 @@ LIQUIDITY_EXIT_FEATURE_COLUMNS: tuple[str, ...] = (
     "liq_klinger_deterioration",
     "liq_vol_expansion",
     "liq_liquidity_shock",
+    "liq_momentum_quality",
 )
 
 

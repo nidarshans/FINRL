@@ -121,6 +121,9 @@ def test_compute_asset_features_contains_required_columns() -> None:
         "liq_liquidity_growth",
         "realized_vol",
         "acc_realized_vol",
+        "momentum_quality",
+        "acc_momentum_quality",
+        "liq_momentum_quality",
         "acc_vol_compression",
         "acc_low_vol",
         "acc_macd_improvement",
@@ -175,6 +178,7 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
         realized_vol_window=3,
         low_vol_window=4,
         liquidity_window=2,
+        momentum_quality_window=3,
         klinger_fast_span=2,
         klinger_slow_span=3,
         klinger_signal_span=2,
@@ -190,8 +194,14 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
     amihud_raw = np.abs(returns) / (dollar_volume + 1e-9)
     log_amihud_raw = np.log(amihud_raw + 1e-12)
     realized_vol = np.full_like(close, np.nan)
+    momentum_quality = np.full_like(close, np.nan)
     for index in range(2, len(close)):
         realized_vol[index] = np.std(returns[index - 2 : index + 1], ddof=1)
+    for index in range(3, len(close)):
+        window_return = close[index] / close[index - 3] - 1.0
+        momentum_quality[index] = window_return / (
+            np.var(returns[index - 2 : index + 1], ddof=1) + 1e-9
+        )
 
     def normalized_slope(values: np.ndarray, index: int, window: int) -> float:
         slope = (values[index] - values[index - window + 1]) / float(window - 1)
@@ -236,6 +246,9 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
     assert_allclose(row["dollar_volume_trend"], expected_dollar_volume_trend, rtol=RTOL, atol=ATOL)
     assert_allclose(row["liquidity_deterioration"], -expected_dollar_volume_trend, rtol=RTOL, atol=ATOL)
     assert_allclose(row["realized_vol"], realized_vol[-1], rtol=RTOL, atol=ATOL)
+    assert_allclose(row["momentum_quality"], momentum_quality[-1], rtol=RTOL, atol=ATOL)
+    assert_allclose(row["acc_momentum_quality"], momentum_quality[-1], rtol=RTOL, atol=ATOL)
+    assert_allclose(row["liq_momentum_quality"], momentum_quality[-1], rtol=RTOL, atol=ATOL)
     assert_allclose(row["acc_vol_compression"], expected_vol_compression, rtol=RTOL, atol=ATOL)
     assert_allclose(row["vol_expansion"], expected_vol_expansion, rtol=RTOL, atol=ATOL)
     assert_allclose(row["acc_low_vol"], expected_low_vol, rtol=RTOL, atol=ATOL)

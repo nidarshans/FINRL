@@ -18,6 +18,7 @@ class FeatureConfig:
     volume_window: int = 20
     accumulation_window: int = 40
     realized_vol_window: int = 20
+    momentum_quality_window: int = 20
     low_vol_window: int = 120
     liquidity_ratio_window: int = 60
     klinger_fast_span: int = 34

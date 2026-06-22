@@ -236,6 +236,21 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .rolling_std(window_size=config.realized_vol_window, min_samples=2)
         .over("ticker")
         .alias("acc_realized_vol"),
+        (
+            (
+                pl.col("close")
+                / pl.col("close")
+                .shift(config.momentum_quality_window)
+                .over("ticker")
+                - 1.0
+            )
+            / (
+                pl.col("return")
+                .rolling_var(window_size=config.momentum_quality_window, min_samples=2)
+                .over("ticker")
+                + 1e-9
+            )
+        ).alias("momentum_quality"),
         rolling_normalized_slope("_log_close", config.accumulation_window, "acc_price_drift"),
         rolling_normalized_slope(
             "_log_dollar_volume",
@@ -352,6 +367,8 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
     )
     features = features.with_columns(
         pl.col("amihud_trend").alias("liq_amihud_trend"),
+        pl.col("momentum_quality").alias("acc_momentum_quality"),
+        pl.col("momentum_quality").alias("liq_momentum_quality"),
         pl.col("acc_liquidity_growth").alias("liq_liquidity_growth"),
         pl.col("dollar_volume_trend").alias("liq_dollar_volume_trend"),
         (-pl.col("dollar_volume_trend")).alias("liquidity_deterioration"),
