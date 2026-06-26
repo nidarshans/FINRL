@@ -18,7 +18,7 @@ from finrl.env.accounting import (
     update_portfolio_value,
     update_running_peak,
 )
-from finrl.env.rewards import RewardConfig, calculate_spy_relative_reward
+from finrl.env.rewards import RewardConfig, calculate_rewards
 from finrl.types import Array
 
 
@@ -99,7 +99,7 @@ def environment_step(
         sortino_target_return=config.sortino_target_return,
         sortino_downside_penalty=config.sortino_downside_penalty,
     )
-    reward = calculate_spy_relative_reward(
+    reward = calculate_rewards(
         net_return=net_return,
         spy_return=spy_return,
         drawdown=drawdown,

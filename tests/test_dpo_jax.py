@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 from numpy.testing import assert_allclose
 
 from finrl.dpo_jax import (
@@ -102,6 +103,31 @@ def test_direct_allocation_head_shape() -> None:
     assert weights.shape == (batch_size, n_assets + 1)
 
 
+def test_direct_allocation_head_supports_configurable_hidden_dims() -> None:
+    batch_size, n_assets, embedding_dim = 4, 10, 16
+    embeddings = jnp.ones((batch_size, n_assets, embedding_dim), dtype=jnp.float32)
+    head = DirectAllocationHead(
+        hidden_dims=(256, 128, 64),
+        allocation_activation="sparsemax",
+    )
+    variables = head.init(jax.random.PRNGKey(0), embeddings)
+
+    weights = head.apply(variables, embeddings)
+
+    assert weights.shape == (batch_size, n_assets + 1)
+    assert_allclose(jnp.sum(weights, axis=-1), jnp.ones((batch_size,)), atol=1e-5)
+    assert bool(jnp.all(weights >= 0.0))
+
+
+def test_dpo_config_validates_hidden_dims() -> None:
+    with pytest.raises(ValueError, match="dpo_score_hidden_dims"):
+        DPOConfig(dpo_score_hidden_dims=())
+    with pytest.raises(ValueError, match="dpo_allocation_hidden_dims"):
+        DPOConfig(dpo_allocation_hidden_dims=(64, 0))
+    with pytest.raises(ValueError, match="dpo_activation"):
+        DPOConfig(dpo_activation="swish")
+
+
 def test_sparsemax_allocation_head_has_gradients() -> None:
     batch_size, n_assets, embedding_dim = 4, 10, 16
     embeddings = jnp.arange(
@@ -159,7 +185,12 @@ def test_dpo_loss_scalar() -> None:
 
 def test_dpo_train_step_updates_encoder_and_allocation_head() -> None:
     windows, returns = _windows_returns()
-    config = DPOConfig(learning_rate=1e-2, transaction_cost_bps=0.0)
+    config = DPOConfig(
+        learning_rate=1e-2,
+        transaction_cost_bps=0.0,
+        dpo_score_hidden_dims=(6,),
+        dpo_allocation_hidden_dims=(8,),
+    )
     state = initialize_dpo_train_state(
         jax.random.PRNGKey(0),
         config,
@@ -172,8 +203,21 @@ def test_dpo_train_step_updates_encoder_and_allocation_head() -> None:
 
     updated, metrics = train_step(state, batch)
 
+    assert state.encoder_config.score_hidden_dims == config.dpo_score_hidden_dims
+    assert state.encoder_config.score_use_layer_norm == config.dpo_score_use_layer_norm
+    assert state.encoder_config.score_activation == config.dpo_activation
     assert (
-        _tree_delta(state.policy.params["encoder"], updated.policy.params["encoder"])
+        _tree_delta(
+            state.policy.params["encoder"]["score_heads"],
+            updated.policy.params["encoder"]["score_heads"],
+        )
+        > 0.0
+    )
+    assert (
+        _tree_delta(
+            state.policy.params["encoder"]["asset_lstm_encoder"],
+            updated.policy.params["encoder"]["asset_lstm_encoder"],
+        )
         > 0.0
     )
     assert (
@@ -190,7 +234,11 @@ def test_dpo_evaluation_predicts_weights_and_loss() -> None:
     windows, returns = _windows_returns()
     state = initialize_dpo_train_state(
         jax.random.PRNGKey(1),
-        DPOConfig(transaction_cost_bps=0.0),
+        DPOConfig(
+            transaction_cost_bps=0.0,
+            dpo_score_hidden_dims=(6,),
+            dpo_allocation_hidden_dims=(8,),
+        ),
         _encoder_config(),
         accumulation_indices=(0, 1),
         liquidity_indices=(2, 3),

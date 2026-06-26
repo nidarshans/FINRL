@@ -14,16 +14,29 @@ class DirectAllocationHead(nn.Module):
     """Map per-asset embeddings to sparse simplex portfolio weights."""
 
     hidden_dim: int = 32
+    hidden_dims: tuple[int, ...] | None = None
     allocation_activation: str = "sparsemax"
+    activation: str = "tanh"
+    use_layer_norm: bool = True
 
     @nn.compact
     def __call__(self, asset_embeddings: Array) -> Array:
         """Return long-only target weights with cash in the final column."""
 
         embeddings = jnp.asarray(asset_embeddings, dtype=jnp.float32)
-        asset_hidden = nn.Dense(self.hidden_dim, name="asset_hidden")(embeddings)
-        asset_hidden = jnp.tanh(asset_hidden)
-        stock_logits = nn.Dense(1, name="stock_logits")(asset_hidden).squeeze(axis=-1)
+        hidden_dims = self.hidden_dims if self.hidden_dims is not None else (self.hidden_dim,)
+        if not hidden_dims:
+            raise ValueError("hidden_dims must be non-empty.")
+        if any(hidden_dim <= 0 for hidden_dim in hidden_dims):
+            raise ValueError("Every allocation hidden dimension must be positive.")
+
+        x = embeddings
+        for index, hidden_dim in enumerate(hidden_dims):
+            x = nn.Dense(hidden_dim, name=f"hidden_{index}")(x)
+            if self.use_layer_norm:
+                x = nn.LayerNorm(name=f"hidden_norm_{index}")(x)
+            x = _activation(self.activation)(x)
+        stock_logits = nn.Dense(1, name="stock_logits")(x).squeeze(axis=-1)
 
         cash_logit_param = self.param(
             "cash_logit",
@@ -38,3 +51,13 @@ class DirectAllocationHead(nn.Module):
         if self.allocation_activation == "sparsemax":
             return sparsemax(logits, axis=-1)
         raise ValueError(f"Unknown allocation activation: {self.allocation_activation}")
+
+
+def _activation(name: str):
+    if name == "tanh":
+        return jnp.tanh
+    if name == "gelu":
+        return nn.gelu
+    if name == "relu":
+        return nn.relu
+    raise ValueError(f"Unknown allocation activation function: {name}")

@@ -20,8 +20,11 @@ def predict_weights(state: DPOTrainState, batch: DPOBatch) -> Array:
         liquidity_indices=state.liquidity_indices,
     )
     head = DirectAllocationHead(
+        hidden_dims=state.config.dpo_allocation_hidden_dims,
         hidden_dim=state.head_hidden_dim,
         allocation_activation=state.config.allocation_activation,
+        activation=state.config.dpo_activation,
+        use_layer_norm=state.config.dpo_allocation_use_layer_norm,
     )
     embeddings = encoder.apply({"params": state.policy.params["encoder"]}, batch.asset_windows)
     return head.apply(

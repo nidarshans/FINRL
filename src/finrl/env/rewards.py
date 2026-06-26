@@ -42,14 +42,14 @@ class RewardFn(Protocol):
         """Return a scalar reward for one environment step."""
 
 
-def calculate_spy_relative_reward(
+def calculate_rewards(
     net_return: Array,
     spy_return: Array,
     drawdown: Array,
     turnover: Array,
     config: RewardConfig,
 ) -> Array:
-    """Return log excess return versus SPY with optional risk penalties."""
+    """Return the configured portfolio reward."""
 
     drawdown_excess = drawdown - config.drawdown_limit
     hinge_penalty = jnp.maximum(0.0, drawdown_excess)
@@ -80,7 +80,8 @@ def jax_softplus(x: Array) -> Array:
     return jnp.logaddexp(x, 0.0)
 
 
-spy_relative_reward = calculate_spy_relative_reward
+calculate_spy_relative_reward = calculate_rewards
+spy_relative_reward = calculate_rewards
 
 
 def calculate_reward(
@@ -89,7 +90,7 @@ def calculate_reward(
     drawdown: Array,
     turnover: Array,
     config: RewardConfig,
-    reward_fn: RewardFn = calculate_spy_relative_reward,
+    reward_fn: RewardFn = calculate_rewards,
 ) -> Array:
     """Evaluate the configured reward function."""
 

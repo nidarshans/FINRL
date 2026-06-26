@@ -22,6 +22,8 @@ class ProductionEncoderConfig:
     asset_feature_dim: int = 1
     asset_hidden_dim: int = 64
     score_hidden_dims: tuple[int, ...] = (16, 8)
+    score_use_layer_norm: bool = True
+    score_activation: str = "tanh"
     normalize_output: bool = True
 
 
@@ -34,6 +36,8 @@ class AssetOnlyEncoderConfig:
     asset_feature_dim: int
     asset_hidden_dim: int = 64
     score_hidden_dims: tuple[int, ...] = (16, 8)
+    score_use_layer_norm: bool = True
+    score_activation: str = "tanh"
     normalize_output: bool = True
 
 
@@ -78,6 +82,8 @@ class AssetOnlyEncoder(nn.Module):
         )
         acc_score, liq_score = AssetScoreHeads(
             hidden_dims=self.config.score_hidden_dims,
+            use_layer_norm=self.config.score_use_layer_norm,
+            activation=self.config.score_activation,
             name="score_heads",
         )(acc_components, liq_components)
         augmented = jnp.concatenate(

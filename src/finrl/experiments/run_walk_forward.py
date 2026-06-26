@@ -157,6 +157,9 @@ def _asset_only_encoder_config(
         n_assets=windows.asset.shape[2],
         asset_feature_dim=windows.asset.shape[3],
         asset_hidden_dim=config.production_encoder.asset_hidden_dim,
+        score_hidden_dims=config.production_encoder.score_hidden_dims,
+        score_use_layer_norm=config.production_encoder.score_use_layer_norm,
+        score_activation=config.production_encoder.score_activation,
         normalize_output=config.production_encoder.normalize_output,
     )
 

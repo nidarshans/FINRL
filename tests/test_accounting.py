@@ -17,7 +17,7 @@ from finrl.env.accounting import (
     update_portfolio_value,
     update_running_peak,
 )
-from finrl.env.rewards import RewardConfig, calculate_spy_relative_reward
+from finrl.env.rewards import RewardConfig, calculate_rewards
 
 RTOL = 1e-6
 ATOL = 1e-8
@@ -83,8 +83,8 @@ def test_calculate_drawdown() -> None:
     assert_allclose(drawdown, 0.1, rtol=RTOL, atol=ATOL)
 
 
-def test_calculate_spy_relative_reward_without_penalties() -> None:
-    reward = calculate_spy_relative_reward(
+def test_calculate_rewards_without_penalties() -> None:
+    reward = calculate_rewards(
         net_return=jnp.array(0.02, dtype=jnp.float32),
         spy_return=jnp.array(0.01, dtype=jnp.float32),
         drawdown=jnp.array(0.0, dtype=jnp.float32),
@@ -100,8 +100,8 @@ def test_calculate_spy_relative_reward_without_penalties() -> None:
     assert_allclose(reward, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_calculate_spy_relative_reward_with_drawdown_and_turnover_penalty() -> None:
-    reward = calculate_spy_relative_reward(
+def test_calculate_rewards_ignores_drawdown_and_turnover_penalty() -> None:
+    reward = calculate_rewards(
         net_return=jnp.array(0.0, dtype=jnp.float32),
         spy_return=jnp.array(0.0, dtype=jnp.float32),
         drawdown=jnp.array(0.25, dtype=jnp.float32),
@@ -117,8 +117,8 @@ def test_calculate_spy_relative_reward_with_drawdown_and_turnover_penalty() -> N
     assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
 
 
-def test_calculate_spy_relative_reward_is_finite_when_spy_is_down() -> None:
-    reward = calculate_spy_relative_reward(
+def test_calculate_rewards_is_finite_when_spy_is_down() -> None:
+    reward = calculate_rewards(
         net_return=jnp.array(-0.01, dtype=jnp.float32),
         spy_return=jnp.array(-0.03, dtype=jnp.float32),
         drawdown=jnp.array(0.05, dtype=jnp.float32),

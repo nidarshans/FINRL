@@ -161,15 +161,27 @@ clipping, optional entropy terms, and target-KL diagnostics.
 `finrl.dpo_jax` implements a differentiable direct portfolio optimization path.
 It is an alternate learned policy mode, not a replacement for PPO.
 
-The DPO path reuses the asset-only encoder and trains:
+The DPO path reuses the LSTM-based asset-only encoder and trains:
 
 * Encoder parameters
 * A `DirectAllocationHead`
 
-The allocation head maps per-asset embeddings to long-only portfolio weights with
-cash in the final column:
+The active DPO data flow is:
 
 ```text
+asset_windows: (T, L, N, F)
+  -> score heads:
+       accumulation MLP with configurable hidden dims and optional LayerNorm
+       liquidity-exit MLP with configurable hidden dims and optional LayerNorm
+  -> concatenate scores onto the asset feature window
+  -> shared LSTM with configurable hidden size from AssetOnlyEncoderConfig
+  -> asset_embeddings: (T, N, D)
+  -> DirectAllocationHead with configurable hidden dims and optional LayerNorm
+  -> logits: (T, N + 1)
+  -> sparsemax/softmax
+  -> weights: (T, N + 1)
+  -> dpo_loss
+
 weights: (T, N + 1)
 asset_returns: (T, N)
 ```
