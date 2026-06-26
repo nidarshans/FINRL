@@ -51,12 +51,9 @@ class ProductionPPOConfig:
 
     @property
     def state_dim(self) -> int:
-        """Return explicit context plus previous portfolio dimensions."""
+        """Return the explicit PPO policy state dimension."""
 
-        return (
-            self.action_dim
-            + 2
-        )
+        return self.asset_latent_dim
 
     def __post_init__(self) -> None:
         if self.n_assets <= 0:
@@ -105,20 +102,18 @@ class ProductionPortfolioAction(NamedTuple):
 
 
 class PPOState(NamedTuple):
-    """Structured per-asset PPO state.
+    """Structured per-step PPO state.
 
     ``asset_embeddings`` excludes cash and has shape ``[n_assets - 1, D]``.
-    ``prev_weights`` includes cash and has shape ``[n_assets]``.
+    Portfolio accounting state is intentionally excluded so each allocation
+    decision depends only on the current asset window.
     """
 
     asset_embeddings: Array
-    prev_weights: Array
-    drawdown: Array
-    prev_turnover: Array
 
 
 class PortfolioActorFlax(nn.Module):
-    """Context-aware shared per-asset allocation scorer."""
+    """Shared per-asset allocation scorer independent of portfolio context."""
 
     config: ProductionPPOConfig
 
@@ -126,32 +121,17 @@ class PortfolioActorFlax(nn.Module):
     def __call__(self, state: PPOState) -> Array:
         """Return logits for `N + 1` tradable assets."""
 
-        n_risky_assets = self.config.n_assets - 1
-        context = build_allocation_context(state.prev_weights, state.drawdown, state.prev_turnover)
-        repeated_context = jnp.broadcast_to(context, (n_risky_assets, context.shape[-1]))
-        asset_prev_weights = state.prev_weights[:n_risky_assets, None]
-        asset_inputs = jnp.concatenate(
-            [
-                state.asset_embeddings,
-                repeated_context,
-                asset_prev_weights,
-            ],
-            axis=-1,
-        )
-        x = asset_inputs
+        x = state.asset_embeddings
         for index, hidden_dim in enumerate(self.config.actor_hidden_dims):
             x = nn.Dense(hidden_dim, name=f"shared_asset_hidden_{index}")(x)
             x = jnp.tanh(x)
         asset_scores = nn.Dense(1, name="shared_asset_score")(x).squeeze(axis=-1)
 
-        cash_input = jnp.concatenate(
-            [
-                context,
-                jnp.atleast_1d(state.prev_weights[-1]),
-            ],
+        pooled = jnp.concatenate(
+            [jnp.mean(state.asset_embeddings, axis=0), jnp.max(state.asset_embeddings, axis=0)],
             axis=-1,
         )
-        cash = cash_input
+        cash = pooled
         for index, hidden_dim in enumerate(self.config.actor_hidden_dims):
             cash = nn.Dense(hidden_dim, name=f"cash_hidden_{index}")(cash)
             cash = jnp.tanh(cash)
@@ -169,34 +149,20 @@ def actor_mean_weights(logits: Array, config: ProductionPPOConfig) -> Array:
 
 def build_structured_ppo_state(
     asset_embeddings: Array,
-    prev_weights: Array,
-    drawdown: Array,
-    previous_turnover: Array,
+    prev_weights: Array | None = None,
+    drawdown: Array | None = None,
+    previous_turnover: Array | None = None,
 ) -> PPOState:
-    """Build structured per-asset PPO state from market and portfolio context."""
+    """Build a PPO state from asset embeddings only.
 
+    The optional portfolio arguments are accepted for backward-compatible call
+    sites that still carry accounting diagnostics through rollout collection.
+    They are deliberately ignored by the actor and critic.
+    """
+
+    del prev_weights, drawdown, previous_turnover
     return PPOState(
         asset_embeddings=jnp.asarray(asset_embeddings, dtype=jnp.float32),
-        prev_weights=jnp.asarray(prev_weights, dtype=jnp.float32),
-        drawdown=jnp.asarray(drawdown, dtype=jnp.float32),
-        prev_turnover=jnp.asarray(previous_turnover, dtype=jnp.float32),
-    )
-
-
-def build_allocation_context(
-    prev_weights: Array,
-    drawdown: Array,
-    previous_turnover: Array,
-) -> Array:
-    """Concatenate portfolio context used by asset-only PPO."""
-
-    return jnp.concatenate(
-        [
-            jnp.asarray(prev_weights, dtype=jnp.float32),
-            jnp.atleast_1d(jnp.asarray(drawdown, dtype=jnp.float32)),
-            jnp.atleast_1d(jnp.asarray(previous_turnover, dtype=jnp.float32)),
-        ],
-        axis=-1,
     )
 
 

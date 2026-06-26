@@ -12,7 +12,6 @@ from finrl.ppo.flax_policy import (
     ProductionPortfolioAction,
     ProductionPPOConfig,
     actor_mean_weights,
-    build_allocation_context,
     build_structured_ppo_state,
     sample_action as sample_flax_action,
 )
@@ -74,7 +73,6 @@ __all__ = [
     "RolloutBuffer",
     "actor_mean_weights",
     "action_log_prob",
-    "build_allocation_context",
     "build_structured_ppo_state",
     "build_update_batch",
     "clipped_value_loss",

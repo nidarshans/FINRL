@@ -1,430 +1,301 @@
 # AI-Native Quantitative Trading Framework
 
-## Objective
+## Authority
 
-Develop an open-source, AI-native quantitative trading framework that combines:
+The implementation is now the source of truth.
 
-* JAX-native GPU execution
-* Asset-only reinforcement learning
-* LSTM temporal representation learning
-* Hawkes-process features
-* Public market data
+This document summarizes the current architecture and intended boundaries. When
+the code and this document disagree, update this document to match the code
+unless the user explicitly requests an implementation change.
+
+---
+
+# Objective
+
+Build a JAX-native research framework for weekly long-only portfolio allocation
+over a configurable stock universe plus cash.
+
+The active system combines:
+
+* Public OHLCV-style market data
+* Split-safe feature engineering
+* JAX-native weekly portfolio accounting
+* Asset-only temporal representation learning
+* Learned accumulation and liquidity-exit score heads
 * PPO portfolio optimization
+* Optional direct portfolio optimization experiments
+* Strict walk-forward evaluation
 
-Target deployment:
+Default deployment assumptions:
 
-* Google Colab
-* Single GPU
-* User-defined 100-stock universe
-
----
-
-# Data
-
-## Asset Features
-
-### Momentum
-
-* Returns
-* RSI
-* MACD
-* Trend slope
-
-### Liquidity
-
-* Amihud illiquidity
-* Dollar volume
-* Turnover
-* Liquidity deterioration
-* Liquidity shock
-
-### Volume
-
-* Volume momentum
-* Volume acceleration
-
-### Relative Features
-
-* Cross-sectional percentile ranks
-
-### Hawkes Features
-
-* Branching ratio (BR)
-* Intensity (λ)
-* Intensity acceleration (Δλ)
-* Half-life (HL)
-* Endogenous fraction (ENDO)
-* Hawkes surprise residual
+* Local CPU for tests, accounting checks, and toy fixtures
+* Google Colab single GPU for full training runs
+* 100 risky assets plus one cash asset by default
 
 ---
 
-## Macro Features
+# Repository Layers
 
-* VIX
-* Oil
-* Fed Funds Rate
-* 10Y Treasury Yield
-* Gold
-* Copper
+* `finrl.data`: market data sources, storage, calendars, universes, validation
+* `finrl.features`: asset, macro, relative, Hawkes, preprocessing, feature schema
+* `finrl.env`: accounting, rewards, schedules, weekly trading environment
+* `finrl.models`: asset-only encoder, score heads, window construction
+* `finrl.ppo`: actor-critic models, simplex distribution, rollout, losses, GAE
+* `finrl.dpo_jax`: differentiable direct portfolio optimization
+* `finrl.backtest`: walk-forward split generation and result containers
+* `finrl.experiments`: experiment configuration, runners, artifacts, reporting
+* `finrl.logging`: TensorBoard integration
 
----
-
-## Spectral Features
-
-Spectral feature artifacts are not part of the active PPO state.
-
-Compatibility tables may retain empty or placeholder spectral outputs for reporting
-interfaces, but PPO must not depend on spectral features.
+Core financial logic should remain deterministic, functional, JAX-compatible,
+CPU-testable, and free of hidden mutable state.
 
 ---
 
-# Representation Learning
+# Data and Features
 
-Input:
+The stock universe is user-defined and fixed for an experiment. The code should
+support configurable `N`; `100` is a default, not a universal constant.
 
-Shape:
+Market data must be chronological, calendar-aligned, and validated before
+feature generation. Feature generation and preprocessing are split-safe:
 
-(60, 100, F_asset)
+1. Fit preprocessing only on the train window.
+2. Transform train and test with the train-fitted preprocessing object.
+3. Never fit on the test window or full dataset.
+4. Compute cross-sectional ranks independently per date.
 
-60 trading-day lookback.
-
----
-
-## Explicit Score-Head Feature Routing
-
-The learned score heads must use explicit allowlists, not prefix matching.
-
-The accumulation MLP receives exactly these columns, in this order:
-
-1. acc_price_drift
-2. acc_liquidity_growth
-3. acc_vol_compression
-4. acc_low_vol
-5. acc_macd_improvement
-6. acc_klinger_improvement
-7. acc_macd_bullish_hist
-8. acc_klinger_bullish_hist
-9. acc_macd_early
-10. acc_klinger_early
-
-Shape entering the accumulation MLP:
-
-(B, L, N, 10)
-
-The liquidity-exit MLP receives exactly these columns, in this order:
-
-1. liq_amihud_trend
-2. liq_liquidity_deterioration
-3. liq_klinger_deterioration
-4. liq_vol_expansion
-5. liq_liquidity_shock
-
-Shape entering the liquidity-exit MLP:
-
-(B, L, N, 5)
-
-Routing rules:
-
-* Feature names are selected from explicit allowlists.
-* Missing required columns raise ValueError.
-* Selected feature names are converted to integer indices before entering JAX/Flax.
-* Diagnostic metadata stores both selected feature names and selected indices.
-* Prefix-only routing is prohibited for score-head inputs.
+Asset-level feature groups include momentum, liquidity, volume, relative, and
+Hawkes features. Macro features may be used in offline features or diagnostics.
+Spectral artifacts are not part of the active PPO or DPO state.
 
 ---
 
-## Asset Encoder
+# Asset Encoder
 
-Shared Asset LSTM
+The active encoder consumes asset feature windows:
 
-Hidden size:
+```text
+(B, L, N, F_asset)
+```
 
-64
+Defaults:
 
-Output:
+* `L = 60` trading days
+* `N = 100` risky assets
+* `F_asset` comes from the feature schema
 
-(100, 64)
+The encoder path:
 
----
+1. Select score-head inputs using explicit feature allowlists.
+2. Compute accumulation and liquidity-exit scalar scores.
+3. Concatenate the two scores onto the raw asset feature window.
+4. Apply a shared LSTM across each asset's time sequence.
+5. Optionally normalize embeddings.
 
-## Score Heads
+Default embedding shape:
 
-Two learned MLP score heads operate on explicit asset feature slices:
+```text
+(B, N, 64)
+```
 
-* Accumulation score head
-* Liquidity-exit score head
+## Score-Head Routing
 
-The scalar scores are concatenated back onto the full asset feature window before
-the shared LSTM.
+The accumulation head receives:
 
-The active PPO pipeline has a single trainable encoder path. PPO stores raw asset
-windows in rollouts and recomputes encoder outputs during updates so gradients
-flow through:
+1. `acc_price_drift`
+2. `acc_liquidity_growth`
+3. `acc_vol_compression`
+4. `acc_low_vol`
+5. `acc_macd_improvement`
+6. `acc_klinger_improvement`
+7. `acc_macd_bullish_hist`
+8. `acc_klinger_bullish_hist`
+9. `acc_macd_early`
+10. `acc_klinger_early`
 
-* Score heads
-* Shared LSTM
-* Actor
-* Critic
+The liquidity-exit head receives:
 
----
+1. `liq_amihud_trend`
+2. `liq_liquidity_deterioration`
+3. `liq_klinger_deterioration`
+4. `liq_vol_expansion`
+5. `liq_liquidity_shock`
 
-# PPO
-
-## State
-
-s_t = (E_t, C_t)
-
-E_t is the per-asset embedding matrix from the asset encoder:
-
-(100, 64)
-
-Portfolio context C_t contains:
-
-* Current portfolio weights
-* Current drawdown
-* Previous turnover
-
----
-
-## Action Space
-
-Target portfolio weights.
-
-The policy outputs:
-
-w_target
-
-including cash.
-
-Universe:
-
-* 100 stocks
-* 1 cash asset
-
-Total assets:
-
-101
-
-Constraints:
-
-Σw = 1
-
-w ≥ 0
-
-Long-only.
+Missing required columns raise `ValueError`. Feature names are converted to
+integer indices before entering JAX/Flax modules. Prefix-only routing is
+prohibited.
 
 ---
 
-## Actor
+# PPO Portfolio Optimization
 
-Input:
+PPO is the main reinforcement-learning path.
 
-* Per-asset embeddings
-* Portfolio context
+State:
 
-Architecture:
+```text
+s_t = E_t
+```
 
-Configurable MLP over asset embeddings and portfolio context.
+Where `E_t` is the per-asset embedding matrix with shape `(N, 64)`.
 
-Output:
+The PPO actor and critic are intentionally independent at each decision step.
+They do not consume previous portfolio weights, current drawdown, or previous
+turnover. Those accounting values still exist in the environment and rollout
+diagnostics for transaction costs, metrics, and GAE targets.
 
-101 logits
+The actor emits `N + 1` logits, including cash. Risky asset logits are computed
+from per-asset embeddings. The cash logit is computed from pooled current asset
+embeddings. The policy samples or evaluates long-only simplex weights.
+Deterministic evaluation uses the distribution mean.
 
-Portfolio construction:
+The critic estimates scalar value from pooled current asset embeddings only.
 
-Long-only simplex action distribution.
+The PPO update path includes clipped policy loss, value loss, GAE, gradient
+clipping, optional entropy terms, and target-KL diagnostics.
 
 ---
 
-## Critic
+# Direct Portfolio Optimization
 
-Input:
+`finrl.dpo_jax` implements a differentiable direct portfolio optimization path.
+It is an alternate learned policy mode, not a replacement for PPO.
 
-* Mean-pooled asset embeddings
-* Max-pooled asset embeddings
-* Portfolio context
+The DPO path reuses the asset-only encoder and trains:
 
-Output:
+* Encoder parameters
+* A `DirectAllocationHead`
 
-Scalar value estimate
+The allocation head maps per-asset embeddings to long-only portfolio weights with
+cash in the final column:
+
+```text
+weights: (T, N + 1)
+asset_returns: (T, N)
+```
+
+Supported allocation activations:
+
+* `sparsemax`
+* `softmax`
+
+`sparsemax` projects logits onto the simplex and may produce exact zero weights.
+
+The DPO objective is a scan-based differentiable backtest. It accounts for:
+
+* Stock returns
+* Cash weight
+* Turnover from previous weights
+* Transaction costs from configured bps
+* Equity curve updates
+* Running maximum equity
+* Drawdown
+* Concentration diagnostics
+
+Current loss behavior follows the code in `finrl.dpo_jax.losses`: it optimizes
+mean log return with a drawdown penalty. Turnover and concentration are reported
+as metrics and have configuration fields, but they are not currently included in
+the loss expression.
+
+Experiment configuration enforces that PPO and DPO are not enabled at the same
+time.
 
 ---
 
 # Trading Environment
 
-## Observation Schedule
+One environment step represents:
 
-Friday close:
+1. Friday close feature/state/action generation
+2. Monday open rebalance to target weights
+3. Transaction cost charge
+4. Hold until the next Monday open
 
-* Compute features
-* Build state
-* Generate action
+No trade is executed at Friday close.
 
-No trading occurs.
+Accounting:
 
----
-
-## Execution Schedule
-
-Monday open:
-
-* Rebalance to target weights
-
-Hold until next Monday open.
-
----
-
-## Transaction Costs
-
-Turnover:
-
-TO_t = Σ |w_target - w_current|
-
-Transaction cost:
-
-TC_t = c × TO_t
-
-Default:
-
-c = 10 bps
-
----
-
-## Cash Asset
-
-Cash is included as a tradable asset.
-
-Cash return may be linked to the risk-free rate.
-
----
-
-## Portfolio Return
-
-Gross return:
-
-R_gross
-
-Net return:
-
+```text
+TO_t = sum(abs(w_target - w_current))
+TC_t = transaction_cost_rate * TO_t
+R_gross = dot(w_executed, r_assets)
 R_net = R_gross - TC_t
-
-Portfolio value update:
-
-V_(t+1) = V_t × (1 + R_net)
-
----
-
-## Drawdown
-
-Peak value:
-
-V_peak
-
-Drawdown:
-
+V_(t+1) = V_t * (1 + R_net)
 DD_t = 1 - V_t / V_peak
+```
 
----
-
-# Reward Function
+Default transaction cost rate is `0.001`, equivalent to 10 bps.
 
 Default reward:
 
+```text
 r_t = log(1 + R_net) - log(1 + R_SPY)
+```
 
-Optional penalties may be enabled by configuration:
-
-* Drawdown penalty
-* Sortino downside penalty
-* Turnover penalty
-* Active risk penalty
-
-Default penalty weights are zero.
-
-Reward functions must be fully pluggable.
-
-Benchmark:
-
-SPY
-
-The primary objective is risk-adjusted alpha generation relative to SPY.
+Optional configured penalties include drawdown, Sortino downside, turnover, and
+active risk.
 
 ---
 
-# Walk-Forward Training
+# Benchmarks and Walk-Forward Evaluation
 
-Training window:
-
-10 years
-
-Testing window:
-
-1 year
-
-Annual rolling retraining.
-
-Example:
-
-Train: 2010-2019
-Test: 2020
-
-Train: 2011-2020
-Test: 2021
-
-Evaluation uses the train-fitted policy parameters for each split.
-
-No online learning or parameter updates occur during evaluation.
-
----
-
-# JAX Stack
-
-Libraries:
-
-* JAX
-* Flax
-* Optax
-* Distrax
-* Orbax
-
-Execution principles:
-
-* jit
-* scan
-* vmap
-
-GPU-first design.
-
----
-
-# Benchmark Suite
-
-Required benchmarks:
+Required benchmark strategies:
 
 * SPY
 * Equal Weight
 * Risk Parity
 * Momentum Top-K
 
-Required ablations:
+Required PPO ablations:
 
-* PPO without Hawkes features
-* PPO without learned score heads
-* PPO without selected accumulation inputs
-* PPO without selected liquidity-exit inputs
+* Without Hawkes features
+* Without learned score heads
+* Without selected accumulation inputs
+* Without selected liquidity-exit inputs
+
+Default walk-forward setup:
+
+* 10-year train window
+* 1-year test window
+* Annual rolling retraining
+
+Evaluation uses train-fitted preprocessing and train-fitted policy parameters.
+No model updates occur during evaluation.
 
 ---
 
-# Current Development Strategy
+# Regime Diagnostics
 
-Implementation order:
+Gaussian HMM regime diagnostics may be used after the core data, feature,
+environment, and benchmark paths are validated.
 
-1. Data layer
-2. Feature engine
-3. Trading environment
-4. Benchmark strategies
-5. Encoder
-6. PPO
-7. Walk-forward engine
+HMM inference must use filtering only:
 
-Do not change architectural assumptions without explicit approval.
+```text
+P(k_t | x_1:t)
+```
+
+Forward-backward smoothing is prohibited for evaluation features.
+
+Regime outputs are diagnostics unless the code explicitly wires them into a
+learned policy path.
+
+---
+
+# Testing Requirements
+
+All core financial calculations require unit tests, including:
+
+* Turnover
+* Transaction costs
+* Portfolio value evolution
+* Drawdown
+* Benchmark returns
+* Cash accounting
+* Weekly rebalance logic
+
+Additional coverage should include JAX `jit` and `scan` compatibility,
+long-only normalization, split-safe preprocessing, no-look-ahead windows,
+score-head routing, PPO losses, DPO losses, and walk-forward boundaries.
+
+Tests should use small deterministic arrays and pass on CPU-only JAX.

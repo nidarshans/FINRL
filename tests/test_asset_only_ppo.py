@@ -188,13 +188,20 @@ def test_train_ppo_on_split_updates_single_policy_state() -> None:
     assert_allclose(jnp.sum(result.rollout.batch.actions, axis=1), jnp.ones((3,)), rtol=1e-5)
 
 
-def test_asset_only_policy_uses_portfolio_context() -> None:
+def test_asset_only_policy_is_independent_of_portfolio_context() -> None:
     config, _ = _configs()
+    embeddings = jnp.ones((2, 4), dtype=jnp.float32)
     state = build_structured_ppo_state(
-        asset_embeddings=jnp.ones((2, 4), dtype=jnp.float32),
+        asset_embeddings=embeddings,
         prev_weights=jnp.array([0.2, 0.3, 0.5], dtype=jnp.float32),
         drawdown=jnp.array(0.1, dtype=jnp.float32),
         previous_turnover=jnp.array(0.2, dtype=jnp.float32),
+    )
+    changed_context_state = build_structured_ppo_state(
+        asset_embeddings=jnp.ones((2, 4), dtype=jnp.float32),
+        prev_weights=jnp.array([0.8, 0.1, 0.1], dtype=jnp.float32),
+        drawdown=jnp.array(0.8, dtype=jnp.float32),
+        previous_turnover=jnp.array(1.5, dtype=jnp.float32),
     )
     actor = PortfolioActorFlax(config)
     critic = PortfolioCriticFlax(config)
@@ -202,7 +209,11 @@ def test_asset_only_policy_uses_portfolio_context() -> None:
     critic_variables = critic.init(jax.random.PRNGKey(4), state)
 
     logits = actor.apply(actor_variables, state)
+    changed_context_logits = actor.apply(actor_variables, changed_context_state)
     value = critic.apply(critic_variables, state)
+    changed_context_value = critic.apply(critic_variables, changed_context_state)
 
     assert logits.shape == (3,)
     assert value.shape == ()
+    assert_allclose(logits, changed_context_logits)
+    assert_allclose(value, changed_context_value)

@@ -11,7 +11,7 @@ from finrl.types import Array
 
 
 class PortfolioCriticFlax(nn.Module):
-    """Flax critic that maps PPO state vectors to scalar values."""
+    """Flax critic that values the current asset window only."""
 
     config: ProductionPPOConfig
 
@@ -25,9 +25,6 @@ class PortfolioCriticFlax(nn.Module):
             [
                 mean_pool,
                 max_pool,
-                state.prev_weights,
-                jnp.atleast_1d(state.drawdown),
-                jnp.atleast_1d(state.prev_turnover),
             ],
             axis=-1,
         )
