@@ -3,6 +3,7 @@
 from finrl.data.calendar import (
     align_to_trading_calendar,
     build_daily_rebalance_calendar,
+    build_rebalance_calendar,
     build_weekly_rebalance_calendar,
     compute_open_to_open_returns,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "YFINANCE_MACRO_PROXIES",
     "align_to_trading_calendar",
     "build_daily_rebalance_calendar",
+    "build_rebalance_calendar",
     "build_weekly_rebalance_calendar",
     "compute_open_to_open_returns",
     "download_ohlcv",

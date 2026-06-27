@@ -20,6 +20,7 @@ from finrl.features.columns import (
 )
 from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
+from finrl.features.panels import AssetFeaturePanel, build_asset_feature_panel
 from finrl.features.pipeline import build_feature_bundle
 from finrl.features.preprocessing import (
     FittedPreprocessor,
@@ -37,11 +38,13 @@ __all__ = [
     "FeatureConfig",
     "FeatureRoutingMetadata",
     "FittedPreprocessor",
+    "AssetFeaturePanel",
     "ACCUMULATION_FEATURE_COLUMNS",
     "LIQUIDITY_EXIT_FEATURE_COLUMNS",
     "PreprocessedSplit",
     "PreprocessingConfig",
     "build_feature_bundle",
+    "build_asset_feature_panel",
     "compute_amihud_illiquidity",
     "compute_asset_features",
     "compute_dollar_volume",

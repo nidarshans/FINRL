@@ -11,49 +11,49 @@ from finrl.types import Array
 
 
 class DirectAllocationHead(nn.Module):
-    """Map per-asset embeddings to sparse simplex portfolio weights."""
+    """Map each asset's scores independently to jointly normalized weights."""
 
-    hidden_dim: int = 32
-    hidden_dims: tuple[int, ...] | None = None
-    allocation_activation: str = "sparsemax"
-    activation: str = "tanh"
+    hidden_dims: tuple[int, ...] = ()
+    simplex_activation: str = "softmax"
+    hidden_activation: str = "tanh"
+    output_activation: str = "identity"
     use_layer_norm: bool = True
 
     @nn.compact
-    def __call__(self, asset_embeddings: Array) -> Array:
+    def __call__(self, asset_scores: Array) -> Array:
         """Return long-only target weights with cash in the final column."""
 
-        embeddings = jnp.asarray(asset_embeddings, dtype=jnp.float32)
-        hidden_dims = self.hidden_dims if self.hidden_dims is not None else (self.hidden_dim,)
-        if not hidden_dims:
-            raise ValueError("hidden_dims must be non-empty.")
-        if any(hidden_dim <= 0 for hidden_dim in hidden_dims):
+        scores = jnp.asarray(asset_scores, dtype=jnp.float32)
+        if any(hidden_dim <= 0 for hidden_dim in self.hidden_dims):
             raise ValueError("Every allocation hidden dimension must be positive.")
 
-        x = embeddings
-        for index, hidden_dim in enumerate(hidden_dims):
+        x = scores
+        for index, hidden_dim in enumerate(self.hidden_dims):
             x = nn.Dense(hidden_dim, name=f"hidden_{index}")(x)
             if self.use_layer_norm:
                 x = nn.LayerNorm(name=f"hidden_norm_{index}")(x)
-            x = _activation(self.activation)(x)
+            x = _activation(self.hidden_activation)(x)
         stock_logits = nn.Dense(1, name="stock_logits")(x).squeeze(axis=-1)
+        stock_logits = _activation(self.output_activation)(stock_logits)
 
-        cash_logit_param = self.param(
-            "cash_logit",
-            nn.initializers.zeros,
-            (1,),
+        if self.simplex_activation == "softmax":
+            stock_weights = jax.nn.softmax(stock_logits, axis=-1)
+        elif self.simplex_activation == "sparsemax":
+            stock_weights = sparsemax(stock_logits, axis=-1)
+        else:
+            raise ValueError(f"Unknown simplex activation: {self.simplex_activation}")
+        cash_weight = jnp.zeros(
+            (*stock_weights.shape[:-1], 1),
+            dtype=stock_weights.dtype,
         )
-        cash_logit = jnp.broadcast_to(cash_logit_param, (stock_logits.shape[0], 1))
-
-        logits = jnp.concatenate([stock_logits, cash_logit], axis=-1)
-        if self.allocation_activation == "softmax":
-            return jax.nn.softmax(logits, axis=-1)
-        if self.allocation_activation == "sparsemax":
-            return sparsemax(logits, axis=-1)
-        raise ValueError(f"Unknown allocation activation: {self.allocation_activation}")
+        return jnp.concatenate([stock_weights, cash_weight], axis=-1)
 
 
 def _activation(name: str):
+    if name == "identity":
+        return lambda value: value
+    if name == "sigmoid":
+        return jax.nn.sigmoid
     if name == "tanh":
         return jnp.tanh
     if name == "gelu":

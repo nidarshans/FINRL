@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import polars as pl
 
 from finrl.data.schema import enforce_ohlcv_schema, enforce_returns_schema
+
+RebalanceFrequency = Literal["daily", "weekly"]
 
 
 def align_to_trading_calendar(data: pl.DataFrame, calendar: pl.DataFrame) -> pl.DataFrame:
@@ -18,7 +22,7 @@ def align_to_trading_calendar(data: pl.DataFrame, calendar: pl.DataFrame) -> pl.
 
 
 def build_weekly_rebalance_calendar(daily_prices: pl.DataFrame) -> pl.DataFrame:
-    """Build Friday decision to next-session execution calendar from OHLCV dates."""
+    """Build last-session-of-week decisions and next-session executions."""
 
     trading_dates = (
         enforce_ohlcv_schema(daily_prices)
@@ -26,11 +30,18 @@ def build_weekly_rebalance_calendar(daily_prices: pl.DataFrame) -> pl.DataFrame:
         .unique()
         .sort("date")
         .with_columns(
-            pl.col("date").dt.weekday().alias("weekday"),
-            pl.col("date").shift(-1).alias("execution_date"),
+            pl.col("date").shift(-1).alias("next_trading_date"),
+            pl.col("date").dt.strftime("%G-%V").alias("week"),
         )
-        .filter(pl.col("weekday") == 5)
-        .drop("weekday")
+        .with_columns(
+            pl.col("next_trading_date").dt.strftime("%G-%V").alias("next_week")
+        )
+        .filter(
+            pl.col("next_trading_date").is_not_null()
+            & (pl.col("week") != pl.col("next_week"))
+        )
+        .drop("week", "next_week")
+        .rename({"next_trading_date": "execution_date"})
         .rename({"date": "decision_date"})
     )
     return trading_dates.with_columns(
@@ -53,6 +64,19 @@ def build_daily_rebalance_calendar(daily_prices: pl.DataFrame) -> pl.DataFrame:
         .rename({"date": "decision_date"})
     )
     return trading_dates.drop_nulls(["execution_date", "next_execution_date"])
+
+
+def build_rebalance_calendar(
+    daily_prices: pl.DataFrame,
+    frequency: RebalanceFrequency,
+) -> pl.DataFrame:
+    """Build a causal rebalance calendar for the configured frequency."""
+
+    if frequency == "daily":
+        return build_daily_rebalance_calendar(daily_prices)
+    if frequency == "weekly":
+        return build_weekly_rebalance_calendar(daily_prices)
+    raise ValueError("frequency must be 'daily' or 'weekly'.")
 
 
 def compute_open_to_open_returns(

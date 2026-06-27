@@ -10,7 +10,7 @@ from finrl.features.columns import (
     LIQUIDITY_EXIT_FEATURE_COLUMNS,
     selected_feature_indices,
 )
-from finrl.models.asset_encoder import component_indices, slice_score_head_components
+from finrl.models.score_heads import slice_score_head_components
 
 
 def _feature_columns() -> tuple[str, ...]:
@@ -44,7 +44,9 @@ def test_selected_feature_indices_use_exact_allowlists() -> None:
 
 def test_component_index_order_is_stable() -> None:
     columns = _feature_columns()
-    acc_indices, liq_indices = component_indices(columns)
+    routing = selected_feature_indices(columns)
+    acc_indices = routing.accumulation_indices
+    liq_indices = routing.liquidity_exit_indices
 
     assert tuple(columns[index] for index in acc_indices) == ACCUMULATION_FEATURE_COLUMNS
     assert tuple(columns[index] for index in liq_indices) == LIQUIDITY_EXIT_FEATURE_COLUMNS
@@ -73,21 +75,20 @@ def test_prefix_matched_leakage_columns_are_excluded() -> None:
     assert "future_return_leakage" not in selected
 
 
-def test_encoder_score_head_slices_have_expected_shapes() -> None:
+def test_score_head_slices_have_expected_shapes() -> None:
     columns = _feature_columns()
     routing = selected_feature_indices(columns)
-    windows = jnp.arange(2 * 4 * 3 * len(columns), dtype=jnp.float32).reshape(
+    panels = jnp.arange(2 * 3 * len(columns), dtype=jnp.float32).reshape(
         2,
-        4,
         3,
         len(columns),
     )
 
     accumulation, liquidity = slice_score_head_components(
-        windows,
+        panels,
         routing.accumulation_indices,
         routing.liquidity_exit_indices,
     )
 
-    assert accumulation.shape == (2, 4, 3, 11)
-    assert liquidity.shape == (2, 4, 3, 6)
+    assert accumulation.shape == (2, 3, 11)
+    assert liquidity.shape == (2, 3, 6)

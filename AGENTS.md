@@ -16,7 +16,7 @@ Build vertically.
 
 Prioritize working end-to-end functionality over premature optimization.
 
-A working benchmark backtest is more valuable than partially implemented PPO.
+A working benchmark backtest is more valuable than model complexity.
 
 ---
 
@@ -27,9 +27,8 @@ A working benchmark backtest is more valuable than partially implemented PPO.
 3. Trading environment
 4. Benchmark strategies
 5. HMM
-6. Encoder
-7. PPO
-8. Walk-forward testing
+6. Score heads and direct allocation
+7. Walk-forward testing
 
 Do not skip ahead.
 
@@ -48,6 +47,8 @@ Mandatory tests:
 * Benchmark return calculation
 * Cash accounting
 * Weekly rebalance logic
+* Daily rebalance logic
+* Holiday-adjusted weekly rebalance logic
 
 No new environment logic may be merged without tests.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import polars as pl
+from numpy.testing import assert_allclose
 
 from finrl.backtest.walk_forward import WalkForwardConfig, generate_walk_forward_splits
 from finrl.dpo_jax import DPOConfig
@@ -25,8 +26,6 @@ from finrl.features.columns import (
 )
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.features.schema import FeatureBundle
-from finrl.models.asset_encoder import ProductionEncoderConfig
-from finrl.ppo.flax_policy import ProductionPPOConfig
 
 
 def _synthetic_dates() -> tuple[date, ...]:
@@ -104,42 +103,31 @@ def synthetic_experiment_data() -> RawExperimentData:
 
 
 def synthetic_experiment_config(
-    enable_ppo: bool = False,
     enable_dpo: bool = False,
 ) -> ExperimentConfig:
-    asset_feature_dim = 2 + len(ACCUMULATION_FEATURE_COLUMNS) + len(
-        LIQUIDITY_EXIT_FEATURE_COLUMNS
-    )
     return ExperimentConfig(
         walk_forward=WalkForwardConfig(train_years=1, test_years=1, step_years=1),
         preprocessing=PreprocessingConfig(rolling_window=2),
-        production_encoder=ProductionEncoderConfig(
-            lookback=3,
-            n_assets=2,
-            asset_feature_dim=asset_feature_dim,
-            asset_hidden_dim=8,
-        ),
-        production_ppo=ProductionPPOConfig(
-            asset_latent_dim=8,
-            n_assets=3,
-            actor_hidden_dims=(8,),
-            critic_hidden_dims=(8,),
-            update_epochs=1,
-            minibatch_size=2,
-            learning_rate=1e-4,
-        ),
         dpo=DPOConfig(num_epochs=2, learning_rate=1e-3, batch_size=2),
-        enable_ppo=enable_ppo,
         enable_dpo=enable_dpo,
         seed=7,
         periods_per_year=6,
     )
 
 
+def test_experiment_frequency_sets_default_annualization() -> None:
+    assert ExperimentConfig(rebalance_frequency="weekly").annualization_periods == 52
+    assert ExperimentConfig(rebalance_frequency="daily").annualization_periods == 252
+    assert ExperimentConfig(
+        rebalance_frequency="daily",
+        periods_per_year=6,
+    ).annualization_periods == 6
+
+
 def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
     result = run_walk_forward_experiment(
         synthetic_experiment_data(),
-        synthetic_experiment_config(enable_ppo=False),
+        synthetic_experiment_config(enable_dpo=False),
     )
 
     assert len(result.split_results) == 2
@@ -152,13 +140,17 @@ def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
     assert set(result.regime_probabilities.columns) == {"decision_date", "split_index"}
     assert set(result.spectral_features.columns) == {"decision_date", "split_index"}
     allocation_sums = result.allocations.select((pl.col("AAA") + pl.col("BBB") + pl.col("CASH")).alias("total"))
-    assert allocation_sums.get_column("total").to_list() == [1.0] * result.allocations.height
+    assert_allclose(
+        allocation_sums.get_column("total").to_numpy(),
+        1.0,
+        atol=1e-6,
+    )
 
 
 def test_reporting_helpers_create_plotly_figures_and_metrics_frame() -> None:
     result = run_walk_forward_experiment(
         synthetic_experiment_data(),
-        synthetic_experiment_config(enable_ppo=False),
+        synthetic_experiment_config(enable_dpo=False),
     )
 
     performance_fig = build_performance_figure(result)
@@ -180,7 +172,7 @@ def test_reporting_helpers_create_plotly_figures_and_metrics_frame() -> None:
 
 def test_walk_forward_experiment_is_reproducible_for_fixed_seed() -> None:
     data = synthetic_experiment_data()
-    config = synthetic_experiment_config(enable_ppo=False)
+    config = synthetic_experiment_config(enable_dpo=False)
 
     first = run_walk_forward_experiment(data, config)
     second = run_walk_forward_experiment(data, config)
@@ -201,4 +193,9 @@ def test_walk_forward_experiment_runs_with_dpo_policy() -> None:
     allocation_sums = result.allocations.select(
         (pl.col("AAA") + pl.col("BBB") + pl.col("CASH")).alias("total")
     )
-    assert allocation_sums.get_column("total").to_list() == [1.0] * result.allocations.height
+    assert_allclose(
+        allocation_sums.get_column("total").to_numpy(),
+        1.0,
+        atol=1e-6,
+    )
+    assert_allclose(result.allocations.get_column("CASH").to_numpy(), 0.0, atol=0.0)

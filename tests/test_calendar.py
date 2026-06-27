@@ -10,6 +10,7 @@ from numpy.testing import assert_allclose
 from finrl.data.calendar import (
     align_to_trading_calendar,
     build_daily_rebalance_calendar,
+    build_rebalance_calendar,
     build_weekly_rebalance_calendar,
     compute_open_to_open_returns,
 )
@@ -73,6 +74,55 @@ def test_build_daily_rebalance_calendar_maps_each_day_to_next_two_sessions() -> 
             "next_execution_date": date(2024, 1, 10),
         },
     ]
+
+
+def test_build_weekly_calendar_uses_thursday_when_friday_is_holiday() -> None:
+    dates = [
+        "2026-06-12",
+        "2026-06-15",
+        "2026-06-16",
+        "2026-06-17",
+        "2026-06-18",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+        "2026-06-25",
+        "2026-06-26",
+        "2026-06-29",
+    ]
+    prices = enforce_ohlcv_schema(
+        pl.DataFrame(
+            {
+                "date": dates,
+                "ticker": ["AAA"] * len(dates),
+                "open": [100.0] * len(dates),
+                "high": [100.0] * len(dates),
+                "low": [100.0] * len(dates),
+                "close": [100.0] * len(dates),
+                "adj_close": [100.0] * len(dates),
+                "volume": [1_000] * len(dates),
+            }
+        )
+    )
+
+    calendar = build_weekly_rebalance_calendar(prices)
+
+    assert calendar.row(1, named=True) == {
+        "decision_date": date(2026, 6, 18),
+        "execution_date": date(2026, 6, 22),
+        "next_execution_date": date(2026, 6, 29),
+    }
+
+
+def test_build_rebalance_calendar_dispatches_frequency() -> None:
+    prices = _two_week_ohlcv()
+
+    assert build_rebalance_calendar(prices, "weekly").equals(
+        build_weekly_rebalance_calendar(prices)
+    )
+    assert build_rebalance_calendar(prices, "daily").equals(
+        build_daily_rebalance_calendar(prices)
+    )
 
 
 def test_compute_open_to_open_returns_uses_same_weekly_holding_period() -> None:

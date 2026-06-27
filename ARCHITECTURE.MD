@@ -2,28 +2,24 @@
 
 ## Authority
 
-The implementation is now the source of truth.
-
-This document summarizes the current architecture and intended boundaries. When
-the code and this document disagree, update this document to match the code
-unless the user explicitly requests an implementation change.
+This document is the authoritative specification. If code conflicts with this
+document, update the code. Architecture changes require explicit user approval.
 
 ---
 
 # Objective
 
-Build a JAX-native research framework for weekly long-only portfolio allocation
+Build a JAX-native research framework for configurable daily or weekly long-only portfolio allocation
 over a configurable stock universe plus cash.
 
 The active system combines:
 
 * Public OHLCV-style market data
 * Split-safe feature engineering
-* JAX-native weekly portfolio accounting
-* Asset-only temporal representation learning
+* JAX-native daily and weekly portfolio accounting
+* Learned per-asset score heads
 * Learned accumulation and liquidity-exit score heads
-* PPO portfolio optimization
-* Optional direct portfolio optimization experiments
+* Direct portfolio optimization
 * Strict walk-forward evaluation
 
 Default deployment assumptions:
@@ -38,13 +34,11 @@ Default deployment assumptions:
 
 * `finrl.data`: market data sources, storage, calendars, universes, validation
 * `finrl.features`: asset, macro, relative, Hawkes, preprocessing, feature schema
-* `finrl.env`: accounting, rewards, schedules, weekly trading environment
-* `finrl.models`: asset-only encoder, score heads, window construction
-* `finrl.ppo`: actor-critic models, simplex distribution, rollout, losses, GAE
+* `finrl.env`: accounting, rewards, schedules, trading environment
+* `finrl.models`: accumulation and liquidity-exit score heads
 * `finrl.dpo_jax`: differentiable direct portfolio optimization
 * `finrl.backtest`: walk-forward split generation and result containers
 * `finrl.experiments`: experiment configuration, runners, artifacts, reporting
-* `finrl.logging`: TensorBoard integration
 
 Core financial logic should remain deterministic, functional, JAX-compatible,
 CPU-testable, and free of hidden mutable state.
@@ -66,37 +60,41 @@ feature generation. Feature generation and preprocessing are split-safe:
 
 Asset-level feature groups include momentum, liquidity, volume, relative, and
 Hawkes features. Macro features may be used in offline features or diagnostics.
-Spectral artifacts are not part of the active PPO or DPO state.
+Spectral artifacts are not part of the active DPO state.
 
 ---
 
-# Asset Encoder
+# Score-Only Allocation Policy
 
-The active encoder consumes asset feature windows:
+The active policy consumes decision-date asset features:
 
 ```text
-(B, L, N, F_asset)
+(B, N, F_asset)
 ```
 
 Defaults:
 
-* `L = 60` trading days
 * `N = 100` risky assets
 * `F_asset` comes from the feature schema
 
-The encoder path:
+The policy path:
 
 1. Select score-head inputs using explicit feature allowlists.
 2. Compute accumulation and liquidity-exit scalar scores.
-3. Concatenate the two scores onto the raw asset feature window.
-4. Apply a shared LSTM across each asset's time sequence.
-5. Optionally normalize embeddings.
+3. Stack the two scores into a per-asset tensor.
+4. Feed only that two-channel score tensor to the direct allocation head.
+5. Apply softmax across stock logits and append an exact zero cash weight.
 
-Default embedding shape:
+Score and allocation shapes:
 
 ```text
-(B, N, 64)
+scores:  (B, N, 2)
+weights: (B, N + 1)
 ```
+
+Raw asset features must not be concatenated back onto the scores or passed to
+the allocation head. There is no recurrent encoder or model lookback window.
+Trailing temporal information belongs in split-safe feature calculations.
 
 ## Score-Head Routing
 
@@ -112,6 +110,7 @@ The accumulation head receives:
 8. `acc_klinger_bullish_hist`
 9. `acc_macd_early`
 10. `acc_klinger_early`
+11. `acc_momentum_quality`
 
 The liquidity-exit head receives:
 
@@ -120,6 +119,7 @@ The liquidity-exit head receives:
 3. `liq_klinger_deterioration`
 4. `liq_vol_expansion`
 5. `liq_liquidity_shock`
+6. `liq_momentum_quality`
 
 Missing required columns raise `ValueError`. Feature names are converted to
 integer indices before entering JAX/Flax modules. Prefix-only routing is
@@ -127,58 +127,25 @@ prohibited.
 
 ---
 
-# PPO Portfolio Optimization
-
-PPO is the main reinforcement-learning path.
-
-State:
-
-```text
-s_t = E_t
-```
-
-Where `E_t` is the per-asset embedding matrix with shape `(N, 64)`.
-
-The PPO actor and critic are intentionally independent at each decision step.
-They do not consume previous portfolio weights, current drawdown, or previous
-turnover. Those accounting values still exist in the environment and rollout
-diagnostics for transaction costs, metrics, and GAE targets.
-
-The actor emits `N + 1` logits, including cash. Risky asset logits are computed
-from per-asset embeddings. The cash logit is computed from pooled current asset
-embeddings. The policy samples or evaluates long-only simplex weights.
-Deterministic evaluation uses the distribution mean.
-
-The critic estimates scalar value from pooled current asset embeddings only.
-
-The PPO update path includes clipped policy loss, value loss, GAE, gradient
-clipping, optional entropy terms, and target-KL diagnostics.
-
----
-
 # Direct Portfolio Optimization
 
 `finrl.dpo_jax` implements a differentiable direct portfolio optimization path.
-It is an alternate learned policy mode, not a replacement for PPO.
+It is the sole learned allocation path and trains:
 
-The DPO path reuses the LSTM-based asset-only encoder and trains:
-
-* Encoder parameters
+* Accumulation and liquidity-exit score-head parameters
 * A `DirectAllocationHead`
 
 The active DPO data flow is:
 
 ```text
-asset_windows: (T, L, N, F)
+asset_features: (T, N, F)
   -> score heads:
-       accumulation MLP with configurable hidden dims and optional LayerNorm
-       liquidity-exit MLP with configurable hidden dims and optional LayerNorm
-  -> concatenate scores onto the asset feature window
-  -> shared LSTM with configurable hidden size from AssetOnlyEncoderConfig
-  -> asset_embeddings: (T, N, D)
-  -> DirectAllocationHead with configurable hidden dims and optional LayerNorm
+       independently configurable accumulation MLP, activation, and LayerNorm
+       independently configurable liquidity-exit MLP, activation, and LayerNorm
+  -> stack scores: (T, N, 2)
+  -> shared per-stock DirectAllocationHead with optional hidden dims
   -> logits: (T, N + 1)
-  -> sparsemax/softmax
+  -> softmax
   -> weights: (T, N + 1)
   -> dpo_loss
 
@@ -186,12 +153,12 @@ weights: (T, N + 1)
 asset_returns: (T, N)
 ```
 
-Supported allocation activations:
-
-* `sparsemax`
-* `softmax`
-
-`sparsemax` projects logits onto the simplex and may produce exact zero weights.
+Allocation logits remain unrestricted real values. Softmax jointly normalizes
+all stock logits to strictly positive stock weights summing to one. Before
+softmax, each stock is processed independently by the same shared allocation
+function; no stock-specific parameters or cross-asset mixing are used. Cash is
+excluded from the projection and its appended portfolio weight is always zero.
+The `N + 1` output shape is retained for environment and accounting compatibility.
 
 The DPO objective is a scan-based differentiable backtest. It accounts for:
 
@@ -209,14 +176,20 @@ mean log return with a drawdown penalty. Turnover and concentration are reported
 as metrics and have configuration fields, but they are not currently included in
 the loss expression.
 
-Experiment configuration enforces that PPO and DPO are not enabled at the same
-time.
+Experiment configuration can disable DPO to run the deterministic
+environment-only equal-weight path.
 
 ---
 
 # Trading Environment
 
-One environment step represents:
+Rebalance frequency is configurable as `weekly` or `daily`.
+
+Weekly mode uses the final trading session of each week as the decision date,
+including Thursday when Friday is a market holiday. Daily mode uses every
+completed trading session as a decision date.
+
+One weekly environment step represents:
 
 1. Friday close feature/state/action generation
 2. Monday open rebalance to target weights
@@ -224,6 +197,16 @@ One environment step represents:
 4. Hold until the next Monday open
 
 No trade is executed at Friday close.
+
+One daily environment step uses the same causal ordering:
+
+1. Trading-day close feature/state/action generation
+2. Next-session open rebalance
+3. Transaction cost charge
+4. Hold until the following session open
+
+Annualized metrics use 52 periods for weekly mode and 252 periods for daily
+mode unless an explicit test or experiment override is supplied.
 
 Accounting:
 
@@ -258,10 +241,9 @@ Required benchmark strategies:
 * Risk Parity
 * Momentum Top-K
 
-Required PPO ablations:
+Required learned-policy ablations:
 
 * Without Hawkes features
-* Without learned score heads
 * Without selected accumulation inputs
 * Without selected liquidity-exit inputs
 
@@ -304,10 +286,12 @@ All core financial calculations require unit tests, including:
 * Drawdown
 * Benchmark returns
 * Cash accounting
-* Weekly rebalance logic
+* Weekly and daily rebalance logic
+* Holiday-adjusted weekly decision logic
 
 Additional coverage should include JAX `jit` and `scan` compatibility,
-long-only normalization, split-safe preprocessing, no-look-ahead windows,
-score-head routing, PPO losses, DPO losses, and walk-forward boundaries.
+long-only normalization, split-safe preprocessing, decision-date panel
+alignment, score-head routing, score-only allocation, DPO losses, and
+walk-forward boundaries.
 
 Tests should use small deterministic arrays and pass on CPU-only JAX.
