@@ -1,4 +1,4 @@
-"""JAX trainer for score-only direct portfolio optimization."""
+"""JAX trainer for direct-feature portfolio optimization."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from flax.training.train_state import TrainState
 
 from finrl.dpo_jax.config import DPOConfig
 from finrl.dpo_jax.losses import DPOLossMetrics, dpo_loss
-from finrl.dpo_jax.policy import build_score_allocation_policy
+from finrl.dpo_jax.policy import build_allocation_policy
 from finrl.types import Array
 
 
@@ -30,12 +30,11 @@ class DPOBatch(NamedTuple):
 
 @struct.dataclass
 class DPOTrainState:
-    """Optimizer state for score heads and the direct allocation head."""
+    """Optimizer state for the direct allocation policy."""
 
     policy: TrainState
     config: DPOConfig = struct.field(pytree_node=False)
-    accumulation_indices: tuple[int, ...] = struct.field(pytree_node=False)
-    liquidity_indices: tuple[int, ...] = struct.field(pytree_node=False)
+    direct_feature_indices: tuple[int, ...] = struct.field(pytree_node=False)
 
 
 def initialize_dpo_train_state(
@@ -43,12 +42,14 @@ def initialize_dpo_train_state(
     config: DPOConfig,
     n_assets: int,
     asset_feature_dim: int,
-    accumulation_indices: tuple[int, ...],
-    liquidity_indices: tuple[int, ...],
+    direct_feature_indices: tuple[int, ...],
 ) -> DPOTrainState:
-    """Initialize score heads and direct allocation head parameters."""
+    """Initialize direct allocation policy parameters."""
 
-    policy = build_score_allocation_policy(config, accumulation_indices, liquidity_indices)
+    policy = build_allocation_policy(
+        config,
+        direct_feature_indices,
+    )
     example_features = jnp.zeros(
         (1, n_assets, asset_feature_dim),
         dtype=jnp.float32,
@@ -61,8 +62,7 @@ def initialize_dpo_train_state(
             tx=optax.adam(config.learning_rate),
         ),
         config=config,
-        accumulation_indices=accumulation_indices,
-        liquidity_indices=liquidity_indices,
+        direct_feature_indices=direct_feature_indices,
     )
 
 
@@ -114,10 +114,9 @@ def train_step(state: DPOTrainState, batch: DPOBatch) -> tuple[DPOTrainState, DP
     """Run one differentiable portfolio optimization update."""
 
     def loss_fn(params: dict[str, object]) -> tuple[Array, DPOLossMetrics]:
-        policy = build_score_allocation_policy(
+        policy = build_allocation_policy(
             state.config,
-            state.accumulation_indices,
-            state.liquidity_indices,
+            state.direct_feature_indices,
         )
         weights = policy.apply({"params": params}, batch.asset_features)
         return dpo_loss(
@@ -143,8 +142,7 @@ def train_step(state: DPOTrainState, batch: DPOBatch) -> tuple[DPOTrainState, DP
     return DPOTrainState(
         policy=new_policy,
         config=state.config,
-        accumulation_indices=state.accumulation_indices,
-        liquidity_indices=state.liquidity_indices,
+        direct_feature_indices=state.direct_feature_indices,
     ), metrics
 
 

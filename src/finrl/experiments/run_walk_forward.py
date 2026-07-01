@@ -32,7 +32,10 @@ from finrl.dpo_jax.losses import DPOLossMetrics
 from finrl.env.trading_env import EnvState, scan_environment
 from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
 from finrl.experiments.config import ExperimentConfig
-from finrl.features.columns import FeatureRoutingMetadata, selected_feature_indices
+from finrl.features.columns import (
+    DirectAllocationRoutingMetadata,
+    selected_direct_allocation_indices,
+)
 from finrl.features.preprocessing import fit_transform_train_transform_test
 from finrl.features.schema import FeatureBundle
 from finrl.features.panels import AssetFeaturePanel, build_asset_feature_panel
@@ -101,19 +104,20 @@ def fit_dpo_train_artifacts(
     train_returns: np.ndarray,
     config: ExperimentConfig,
     split_index: int = 0,
-    feature_routing: FeatureRoutingMetadata | None = None,
+    feature_routing: DirectAllocationRoutingMetadata | None = None,
     train_spy: np.ndarray | None = None,
 ) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
     """Fit direct portfolio optimization from decision-date asset features."""
 
-    routing = feature_routing or selected_feature_indices(train_features.feature_columns)
+    routing = feature_routing or selected_direct_allocation_indices(
+        train_features.feature_columns
+    )
     dpo_state = initialize_dpo_train_state(
         jax.random.PRNGKey(config.seed + split_index),
         config.dpo,
         train_features.values.shape[1],
         train_features.values.shape[2],
-        routing.accumulation_indices,
-        routing.liquidity_exit_indices,
+        routing.direct_allocation_indices,
     )
     initial_weights = jnp.zeros((train_returns.shape[1],), dtype=jnp.float32).at[-1].set(1.0)
     batch = build_dpo_batch(
@@ -190,7 +194,7 @@ def fit_train_artifacts(
     split_index: int = 0,
     spy_returns: pl.DataFrame | None = None,
 ) -> ExperimentArtifacts:
-    """Fit preprocessing and optional score-only DPO on train only."""
+    """Fit preprocessing and optional direct-allocation DPO on train only."""
 
     train_features, test_features = slice_feature_bundle(features, split)
     preprocessed = fit_transform_train_transform_test(train_features, test_features, config.preprocessing)
@@ -204,7 +208,9 @@ def fit_train_artifacts(
         if spy_returns is None:
             raise ValueError("DPO training requires SPY returns.")
         train_spy = _spy_for_dates(spy_returns, train_panel.decision_dates)
-        feature_routing = selected_feature_indices(train_panel.feature_columns)
+        feature_routing = selected_direct_allocation_indices(
+            train_panel.feature_columns
+        )
         dpo_policy_state, dpo_train_metrics = fit_dpo_train_artifacts(
             train_panel,
             train_returns,

@@ -20,10 +20,7 @@ from finrl.experiments import (
     metrics_to_frame,
     run_walk_forward_experiment,
 )
-from finrl.features.columns import (
-    ACCUMULATION_FEATURE_COLUMNS,
-    LIQUIDITY_EXIT_FEATURE_COLUMNS,
-)
+from finrl.features.columns import DIRECT_ALLOCATION_FEATURE_COLUMNS
 from finrl.features.preprocessing import PreprocessingConfig
 from finrl.features.schema import FeatureBundle
 
@@ -39,7 +36,7 @@ def _synthetic_dates() -> tuple[date, ...]:
 def synthetic_experiment_data() -> RawExperimentData:
     dates = _synthetic_dates()
     tickers = ("AAA", "BBB")
-    dpo_feature_columns = (*ACCUMULATION_FEATURE_COLUMNS, *LIQUIDITY_EXIT_FEATURE_COLUMNS)
+    dpo_feature_columns = DIRECT_ALLOCATION_FEATURE_COLUMNS
     asset_rows = []
     for day_index, day in enumerate(dates):
         for ticker_index, ticker in enumerate(tickers):
@@ -181,7 +178,7 @@ def test_walk_forward_experiment_is_reproducible_for_fixed_seed() -> None:
     assert first.spy_curve.to_dicts() == second.spy_curve.to_dicts()
 
 
-def test_walk_forward_experiment_runs_with_dpo_policy() -> None:
+def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
     result = run_walk_forward_experiment(
         synthetic_experiment_data(),
         synthetic_experiment_config(enable_dpo=True),

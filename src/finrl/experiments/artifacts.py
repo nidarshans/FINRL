@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from finrl.backtest.walk_forward import WalkForwardSplit
-from finrl.features.columns import FeatureRoutingMetadata
+from finrl.features.columns import DirectAllocationRoutingMetadata
 from finrl.features.preprocessing import FittedPreprocessor
 from finrl.features.panels import AssetFeaturePanel
 from finrl.features.schema import FeatureBundle
@@ -32,6 +32,6 @@ class ExperimentArtifacts:
     preprocessor: FittedPreprocessor
     train_features: AssetFeaturePanel
     test_features: AssetFeaturePanel
-    feature_routing: FeatureRoutingMetadata | None = None
+    feature_routing: DirectAllocationRoutingMetadata | None = None
     dpo_policy_state: DPOTrainState | None = None
     dpo_train_metrics: tuple[DPOLossMetrics, ...] | None = None

@@ -13,10 +13,9 @@ from finrl.features.asset import (
     compute_volume_momentum,
 )
 from finrl.features.columns import (
-    ACCUMULATION_FEATURE_COLUMNS,
-    LIQUIDITY_EXIT_FEATURE_COLUMNS,
-    FeatureRoutingMetadata,
-    selected_feature_indices,
+    DIRECT_ALLOCATION_FEATURE_COLUMNS,
+    DirectAllocationRoutingMetadata,
+    selected_direct_allocation_indices,
 )
 from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
@@ -36,11 +35,10 @@ from finrl.features.schema import FeatureBundle, FeatureConfig
 __all__ = [
     "FeatureBundle",
     "FeatureConfig",
-    "FeatureRoutingMetadata",
+    "DirectAllocationRoutingMetadata",
     "FittedPreprocessor",
     "AssetFeaturePanel",
-    "ACCUMULATION_FEATURE_COLUMNS",
-    "LIQUIDITY_EXIT_FEATURE_COLUMNS",
+    "DIRECT_ALLOCATION_FEATURE_COLUMNS",
     "PreprocessedSplit",
     "PreprocessingConfig",
     "build_feature_bundle",
@@ -60,6 +58,6 @@ __all__ = [
     "cross_sectional_percentile_rank",
     "fit_preprocessors",
     "fit_transform_train_transform_test",
-    "selected_feature_indices",
+    "selected_direct_allocation_indices",
     "transform_features",
 ]

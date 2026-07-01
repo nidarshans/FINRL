@@ -1,62 +1,48 @@
-"""Explicit feature routing contracts for asset score heads."""
+"""Explicit feature routing contracts for learned allocation policies."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-ACCUMULATION_FEATURE_COLUMNS: tuple[str, ...] = (
-    "acc_price_drift",
-    "acc_liquidity_growth",
-    "acc_vol_compression",
-    "acc_low_vol",
-    "acc_klinger_improvement",
-    "acc_klinger_bullish_hist",
-    "acc_momentum_quality",
+DIRECT_ALLOCATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "mr_ewma50_vol_gap",
-)
-
-LIQUIDITY_EXIT_FEATURE_COLUMNS: tuple[str, ...] = (
-    "liq_liquidity_deterioration",
-    "liq_klinger_deterioration",
-    "liq_vol_expansion",
+    "acc_macd_signal",
+    "acc_klinger_signal",
 )
 
 
 @dataclass(frozen=True, slots=True)
-class FeatureRoutingMetadata:
-    """Selected score-head feature names and integer positions."""
+class DirectAllocationRoutingMetadata:
+    """Selected direct-allocation feature names and integer positions."""
 
-    accumulation_feature_names: tuple[str, ...]
-    accumulation_indices: tuple[int, ...]
-    liquidity_exit_feature_names: tuple[str, ...]
-    liquidity_exit_indices: tuple[int, ...]
+    direct_allocation_feature_names: tuple[str, ...]
+    direct_allocation_indices: tuple[int, ...]
 
 
-def selected_feature_indices(
+def selected_direct_allocation_indices(
     feature_columns: tuple[str, ...],
-) -> FeatureRoutingMetadata:
-    """Return explicit score-head feature names and indices.
+) -> DirectAllocationRoutingMetadata:
+    """Return explicit direct-allocation feature names and indices.
 
-    The score heads intentionally use fixed allowlists instead of prefix routing.
-    That keeps similarly named diagnostics or leakage-prone helper columns out of
-    the learned accumulation and liquidity-exit scores.
+    The fixed allowlist keeps similarly named diagnostics or leakage-prone helper
+    columns out of the learned allocation policy.
     """
 
     positions = {name: index for index, name in enumerate(feature_columns)}
     missing = tuple(
         name
-        for name in (*ACCUMULATION_FEATURE_COLUMNS, *LIQUIDITY_EXIT_FEATURE_COLUMNS)
+        for name in DIRECT_ALLOCATION_FEATURE_COLUMNS
         if name not in positions
     )
     if missing:
         raise ValueError(
-            "Missing required asset feature columns for score-head routing: "
+            "Missing required asset feature columns for policy routing: "
             + ", ".join(missing)
         )
-    return FeatureRoutingMetadata(
-        accumulation_feature_names=ACCUMULATION_FEATURE_COLUMNS,
-        accumulation_indices=tuple(positions[name] for name in ACCUMULATION_FEATURE_COLUMNS),
-        liquidity_exit_feature_names=LIQUIDITY_EXIT_FEATURE_COLUMNS,
-        liquidity_exit_indices=tuple(positions[name] for name in LIQUIDITY_EXIT_FEATURE_COLUMNS),
+    return DirectAllocationRoutingMetadata(
+        direct_allocation_feature_names=DIRECT_ALLOCATION_FEATURE_COLUMNS,
+        direct_allocation_indices=tuple(
+            positions[name] for name in DIRECT_ALLOCATION_FEATURE_COLUMNS
+        ),
     )

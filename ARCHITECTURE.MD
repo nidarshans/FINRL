@@ -17,8 +17,7 @@ The active system combines:
 * Public OHLCV-style market data
 * Split-safe feature engineering
 * JAX-native daily and weekly portfolio accounting
-* Learned per-asset score heads
-* Learned accumulation and liquidity-exit score heads
+* Learned direct-feature allocation head
 * Direct portfolio optimization
 * Strict walk-forward evaluation
 
@@ -35,7 +34,6 @@ Default deployment assumptions:
 * `finrl.data`: market data sources, storage, calendars, universes, validation
 * `finrl.features`: asset, macro, relative, Hawkes, preprocessing, feature schema
 * `finrl.env`: accounting, rewards, schedules, trading environment
-* `finrl.models`: accumulation and liquidity-exit score heads
 * `finrl.dpo_jax`: differentiable direct portfolio optimization
 * `finrl.backtest`: walk-forward split generation and result containers
 * `finrl.experiments`: experiment configuration, runners, artifacts, reporting
@@ -64,7 +62,7 @@ Spectral artifacts are not part of the active DPO state.
 
 ---
 
-# Score-Only Allocation Policy
+# Direct-Feature Allocation Policy
 
 The active policy consumes decision-date asset features:
 
@@ -79,41 +77,28 @@ Defaults:
 
 The policy path:
 
-1. Select score-head inputs using explicit feature allowlists.
-2. Compute accumulation and liquidity-exit scalar scores.
-3. Stack the two scores into a per-asset tensor.
-4. Feed only that two-channel score tensor to the direct allocation head.
-5. Apply softmax across stock logits and append an exact zero cash weight.
+1. Select direct-allocation inputs using an explicit feature allowlist.
+2. Feed the selected per-asset features to the shared allocation head.
+3. Apply the configured simplex activation across stock logits.
+4. Append an exact zero cash weight.
 
-Score and allocation shapes:
+Input and allocation shapes:
 
 ```text
-scores:  (B, N, 2)
-weights: (B, N + 1)
+direct features: (B, N, 3)
+weights:         (B, N + 1)
 ```
 
-Raw asset features must not be concatenated back onto the scores or passed to
-the allocation head. There is no recurrent encoder or model lookback window.
-Trailing temporal information belongs in split-safe feature calculations.
+There is no intermediate learned layer, recurrent encoder, or model lookback
+window. Trailing temporal information belongs in split-safe feature calculations.
 
-## Score-Head Routing
+## Direct-Allocation Routing
 
-The accumulation head receives:
+The allocation head receives:
 
-1. `acc_price_drift`
-2. `acc_liquidity_growth`
-3. `acc_vol_compression`
-4. `acc_low_vol`
-5. `acc_klinger_improvement`
-6. `acc_klinger_bullish_hist`
-7. `acc_momentum_quality`
-8. `mr_ewma50_vol_gap`
-
-The liquidity-exit head receives:
-
-1. `liq_liquidity_deterioration`
-2. `liq_klinger_deterioration`
-3. `liq_vol_expansion`
+1. `mr_ewma50_vol_gap`
+2. `acc_macd_signal`
+3. `acc_klinger_signal`
 
 Missing required columns raise `ValueError`. Feature names are converted to
 integer indices before entering JAX/Flax modules. Prefix-only routing is
@@ -123,23 +108,17 @@ prohibited.
 
 # Direct Portfolio Optimization
 
-`finrl.dpo_jax` implements a differentiable direct portfolio optimization path.
-It is the sole learned allocation path and trains:
-
-* Accumulation and liquidity-exit score-head parameters
-* A `DirectAllocationHead`
+`finrl.dpo_jax` implements differentiable direct portfolio optimization and
+trains a `DirectAllocationHead` over explicitly routed asset features.
 
 The active DPO data flow is:
 
 ```text
 asset_features: (T, N, F)
-  -> score heads:
-       independently configurable accumulation MLP, activation, and LayerNorm
-       independently configurable liquidity-exit MLP, activation, and LayerNorm
-  -> stack scores: (T, N, 2)
+  -> select direct allocation features: (T, N, 3)
   -> shared per-stock DirectAllocationHead with optional hidden dims
   -> logits: (T, N + 1)
-  -> softmax
+  -> simplex activation
   -> weights: (T, N + 1)
   -> dpo_loss
 
@@ -286,7 +265,7 @@ All core financial calculations require unit tests, including:
 
 Additional coverage should include JAX `jit` and `scan` compatibility,
 long-only normalization, split-safe preprocessing, decision-date panel
-alignment, score-head routing, score-only allocation, DPO losses, and
+alignment, direct-feature routing, allocation, DPO losses, and
 walk-forward boundaries.
 
 Tests should use small deterministic arrays and pass on CPU-only JAX.

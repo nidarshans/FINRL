@@ -1,94 +1,60 @@
-"""Tests for explicit score-head feature routing."""
+"""Tests for explicit direct-allocation feature routing."""
 
 from __future__ import annotations
 
-import jax.numpy as jnp
 import pytest
 
 from finrl.features.columns import (
-    ACCUMULATION_FEATURE_COLUMNS,
-    LIQUIDITY_EXIT_FEATURE_COLUMNS,
-    selected_feature_indices,
+    DIRECT_ALLOCATION_FEATURE_COLUMNS,
+    selected_direct_allocation_indices,
 )
-from finrl.models.score_heads import slice_score_head_components
 
 
 def _feature_columns() -> tuple[str, ...]:
     return (
         "date",
         "return",
-        "acc_forbidden_leakage",
-        *ACCUMULATION_FEATURE_COLUMNS[:3],
-        "liq_amihud_illiquidity",
-        *LIQUIDITY_EXIT_FEATURE_COLUMNS[:2],
         "future_return_leakage",
-        *ACCUMULATION_FEATURE_COLUMNS[3:],
-        *LIQUIDITY_EXIT_FEATURE_COLUMNS[2:],
-        "liq_forbidden_extra",
+        "acc_macd_signal",
+        "mr_ewma50_vol_gap",
+        "acc_klinger_signal",
+        "unrouted_diagnostic",
     )
 
 
-def test_selected_feature_indices_use_exact_allowlists() -> None:
+def test_direct_allocation_feature_columns_are_explicit() -> None:
+    assert DIRECT_ALLOCATION_FEATURE_COLUMNS == (
+        "mr_ewma50_vol_gap",
+        "acc_macd_signal",
+        "acc_klinger_signal",
+    )
+
+
+def test_selected_direct_allocation_indices_use_exact_allowlist() -> None:
     columns = _feature_columns()
-    routing = selected_feature_indices(columns)
+    routing = selected_direct_allocation_indices(columns)
 
-    assert routing.accumulation_feature_names == ACCUMULATION_FEATURE_COLUMNS
-    assert routing.liquidity_exit_feature_names == LIQUIDITY_EXIT_FEATURE_COLUMNS
-    assert routing.accumulation_indices == tuple(
-        columns.index(name) for name in ACCUMULATION_FEATURE_COLUMNS
-    )
-    assert routing.liquidity_exit_indices == tuple(
-        columns.index(name) for name in LIQUIDITY_EXIT_FEATURE_COLUMNS
+    assert routing.direct_allocation_feature_names == DIRECT_ALLOCATION_FEATURE_COLUMNS
+    assert routing.direct_allocation_indices == tuple(
+        columns.index(name) for name in DIRECT_ALLOCATION_FEATURE_COLUMNS
     )
 
 
-def test_component_index_order_is_stable() -> None:
-    columns = _feature_columns()
-    routing = selected_feature_indices(columns)
-    acc_indices = routing.accumulation_indices
-    liq_indices = routing.liquidity_exit_indices
-
-    assert tuple(columns[index] for index in acc_indices) == ACCUMULATION_FEATURE_COLUMNS
-    assert tuple(columns[index] for index in liq_indices) == LIQUIDITY_EXIT_FEATURE_COLUMNS
-
-
-def test_selected_feature_indices_raise_for_missing_columns() -> None:
+def test_missing_direct_allocation_column_raises() -> None:
     columns = tuple(
-        column for column in _feature_columns() if column != "acc_price_drift"
+        column for column in _feature_columns() if column != "acc_macd_signal"
     )
 
-    with pytest.raises(ValueError, match="acc_price_drift"):
-        selected_feature_indices(columns)
+    with pytest.raises(ValueError, match="acc_macd_signal"):
+        selected_direct_allocation_indices(columns)
 
 
-def test_prefix_matched_leakage_columns_are_excluded() -> None:
+def test_unrouted_columns_are_excluded() -> None:
     columns = _feature_columns()
-    routing = selected_feature_indices(columns)
+    routing = selected_direct_allocation_indices(columns)
     selected = {
-        *(columns[index] for index in routing.accumulation_indices),
-        *(columns[index] for index in routing.liquidity_exit_indices),
+        columns[index] for index in routing.direct_allocation_indices
     }
 
-    assert "acc_forbidden_leakage" not in selected
-    assert "liq_forbidden_extra" not in selected
-    assert "liq_amihud_illiquidity" not in selected
     assert "future_return_leakage" not in selected
-
-
-def test_score_head_slices_have_expected_shapes() -> None:
-    columns = _feature_columns()
-    routing = selected_feature_indices(columns)
-    panels = jnp.arange(2 * 3 * len(columns), dtype=jnp.float32).reshape(
-        2,
-        3,
-        len(columns),
-    )
-
-    accumulation, liquidity = slice_score_head_components(
-        panels,
-        routing.accumulation_indices,
-        routing.liquidity_exit_indices,
-    )
-
-    assert accumulation.shape == (2, 3, 8)
-    assert liquidity.shape == (2, 3, 3)
+    assert "unrouted_diagnostic" not in selected

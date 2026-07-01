@@ -1,4 +1,4 @@
-# FINRL Score Allocation
+# FINRL Direct Allocation
 
 JAX-native research framework for long-only allocation across a
 configurable stock universe plus cash.
@@ -10,15 +10,14 @@ The learned policy is intentionally small:
 
 ```text
 decision-date asset features
-  -> accumulation and liquidity-exit score heads
-  -> two scores per asset
+  -> explicit direct-feature routing
   -> direct allocation head
   -> stock and cash weights
 ```
 
-Raw features are used only by the score heads. The allocation head never sees
-them directly, and the model has no recurrent encoder. Trailing information is
-computed by the split-safe feature pipeline.
+The allocation head sees only the explicitly routed feature tensor and has no
+recurrent encoder. Trailing information is computed by the split-safe feature
+pipeline.
 
 ## Development
 

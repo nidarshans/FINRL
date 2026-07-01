@@ -19,16 +19,6 @@ class DPOConfig:
     lambda_drawdown: float = 0.10
     lambda_concentration: float = 0.01
 
-    accumulation_hidden_dims: tuple[int, ...] = (16, 8)
-    accumulation_hidden_activation: str = "tanh"
-    accumulation_output_activation: str = "sigmoid"
-    accumulation_use_layer_norm: bool = True
-
-    liquidity_exit_hidden_dims: tuple[int, ...] = (16, 8)
-    liquidity_exit_hidden_activation: str = "tanh"
-    liquidity_exit_output_activation: str = "sigmoid"
-    liquidity_exit_use_layer_norm: bool = True
-
     allocation_hidden_dims: tuple[int, ...] = ()
     allocation_hidden_activation: str = "tanh"
     allocation_output_activation: str = "identity"
@@ -38,22 +28,8 @@ class DPOConfig:
     eps: float = 1e-8
 
     def __post_init__(self) -> None:
-        _validate_hidden_dims("accumulation_hidden_dims", self.accumulation_hidden_dims)
-        _validate_hidden_dims("liquidity_exit_hidden_dims", self.liquidity_exit_hidden_dims)
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)
-        _validate_activation("accumulation_hidden_activation", self.accumulation_hidden_activation)
-        _validate_activation("liquidity_exit_hidden_activation", self.liquidity_exit_hidden_activation)
         _validate_activation("allocation_hidden_activation", self.allocation_hidden_activation)
-        _validate_activation(
-            "accumulation_output_activation",
-            self.accumulation_output_activation,
-            output=True,
-        )
-        _validate_activation(
-            "liquidity_exit_output_activation",
-            self.liquidity_exit_output_activation,
-            output=True,
-        )
         _validate_activation(
             "allocation_output_activation",
             self.allocation_output_activation,

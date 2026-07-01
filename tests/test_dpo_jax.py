@@ -10,7 +10,7 @@ from numpy.testing import assert_allclose
 from finrl.dpo_jax import (
     DPOConfig,
     DirectAllocationHead,
-    ScoreAllocationPolicy,
+    DirectFeatureAllocationPolicy,
     build_dpo_batch,
     dpo_loss,
     evaluate_dpo,
@@ -19,7 +19,6 @@ from finrl.dpo_jax import (
     sparsemax,
     train_step,
 )
-from finrl.models.score_heads import AssetScoreHeads
 
 
 def _tree_delta(left: object, right: object) -> float:
@@ -41,23 +40,6 @@ def _features_returns() -> tuple[jax.Array, jax.Array]:
         dtype=jnp.float32,
     )
     return features / 100.0, returns
-
-
-def _score_policy(allocation_hidden_dims: tuple[int, ...] = ()) -> ScoreAllocationPolicy:
-    return ScoreAllocationPolicy(
-        accumulation_indices=(0, 1),
-        liquidity_indices=(2, 3),
-        accumulation_hidden_dims=(6,),
-        accumulation_hidden_activation="tanh",
-        accumulation_output_activation="sigmoid",
-        accumulation_use_layer_norm=True,
-        liquidity_exit_hidden_dims=(4,),
-        liquidity_exit_hidden_activation="relu",
-        liquidity_exit_output_activation="sigmoid",
-        liquidity_exit_use_layer_norm=False,
-        allocation_hidden_dims=allocation_hidden_dims,
-        simplex_activation="softmax",
-    )
 
 
 def test_sparsemax_shape() -> None:
@@ -112,11 +94,11 @@ def test_direct_allocation_head_shape() -> None:
 
 
 def test_direct_allocation_head_supports_no_hidden_layers_with_softmax() -> None:
-    scores = jnp.ones((4, 10, 2), dtype=jnp.float32)
+    features = jnp.ones((4, 10, 2), dtype=jnp.float32)
     head = DirectAllocationHead(hidden_dims=(), simplex_activation="softmax")
-    variables = head.init(jax.random.PRNGKey(0), scores)
+    variables = head.init(jax.random.PRNGKey(0), features)
 
-    weights = head.apply(variables, scores)
+    weights = head.apply(variables, features)
 
     assert weights.shape == (4, 11)
     assert "hidden_0" not in variables["params"]
@@ -144,14 +126,10 @@ def test_direct_allocation_head_supports_configurable_hidden_dims() -> None:
 
 
 def test_dpo_config_validates_hidden_dims() -> None:
-    with pytest.raises(ValueError, match="accumulation_hidden_dims"):
-        DPOConfig(accumulation_hidden_dims=())
-    with pytest.raises(ValueError, match="liquidity_exit_hidden_dims"):
-        DPOConfig(liquidity_exit_hidden_dims=(0,))
     with pytest.raises(ValueError, match="allocation_hidden_dims"):
         DPOConfig(allocation_hidden_dims=(64, 0))
-    with pytest.raises(ValueError, match="accumulation_hidden_activation"):
-        DPOConfig(accumulation_hidden_activation="swish")
+    with pytest.raises(ValueError, match="allocation_hidden_activation"):
+        DPOConfig(allocation_hidden_activation="swish")
 
 
 def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax() -> None:
@@ -159,6 +137,45 @@ def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax()
 
     assert config.allocation_hidden_dims == ()
     assert config.simplex_activation == "softmax"
+
+
+def test_direct_feature_policy_returns_normalized_weights() -> None:
+    policy = DirectFeatureAllocationPolicy(
+        direct_feature_indices=(0, 2, 4),
+        allocation_hidden_dims=(8,),
+    )
+    features = jnp.ones((2, 4, 5), dtype=jnp.float32)
+    variables = policy.init(jax.random.PRNGKey(0), features)
+    weights = policy.apply(variables, features)
+
+    assert weights.shape == (2, 5)
+    assert bool(jnp.all(jnp.isfinite(weights)))
+    assert_allclose(jnp.sum(weights, axis=-1), jnp.ones((2,)), atol=1e-6)
+
+
+def test_direct_feature_policy_initializes_and_predicts() -> None:
+    features, returns = _features_returns()
+    state = initialize_dpo_train_state(
+        jax.random.PRNGKey(0),
+        DPOConfig(allocation_hidden_dims=(8,)),
+        2,
+        5,
+        direct_feature_indices=(0, 2, 4),
+    )
+    weights = predict_weights(state, build_dpo_batch(features, returns))
+
+    assert weights.shape == (4, 3)
+
+
+def test_direct_feature_mode_requires_routed_indices() -> None:
+    with pytest.raises(ValueError, match="requires routed feature indices"):
+        initialize_dpo_train_state(
+            jax.random.PRNGKey(0),
+            DPOConfig(),
+            2,
+            5,
+            direct_feature_indices=(),
+        )
 
 
 def test_softmax_allocation_head_has_gradients() -> None:
@@ -250,35 +267,11 @@ def test_dpo_loss_scalar() -> None:
     assert loss.shape == ()
 
 
-def test_score_allocation_policy_only_passes_two_scores_to_allocation_head() -> None:
-    policy = _score_policy(allocation_hidden_dims=(8,))
-    features, _ = _features_returns()
-    params = policy.init(jax.random.PRNGKey(0), features)["params"]
-
-    assert params["allocation_head"]["hidden_0"]["kernel"].shape[0] == 2
-    assert params["score_heads"]["accumulation"]["hidden_0"]["kernel"].shape[-1] == 6
-    assert params["score_heads"]["liquidity"]["hidden_0"]["kernel"].shape[-1] == 4
-
-
-def test_score_head_sigmoid_outputs_are_bounded() -> None:
-    heads = AssetScoreHeads(
-        accumulation_hidden_dims=(6,),
-        accumulation_output_activation="sigmoid",
-        liquidity_exit_hidden_dims=(4,),
-        liquidity_exit_output_activation="sigmoid",
-    )
-    acc_inputs = jnp.arange(22, dtype=jnp.float32).reshape(2, 11)
-    exit_inputs = jnp.arange(12, dtype=jnp.float32).reshape(2, 6)
-    variables = heads.init(jax.random.PRNGKey(0), acc_inputs, exit_inputs)
-
-    accumulation, liquidity_exit = heads.apply(variables, acc_inputs, exit_inputs)
-
-    assert bool(jnp.all((accumulation >= 0.0) & (accumulation <= 1.0)))
-    assert bool(jnp.all((liquidity_exit >= 0.0) & (liquidity_exit <= 1.0)))
-
-
 def test_unrouted_raw_feature_cannot_change_allocations() -> None:
-    policy = _score_policy(allocation_hidden_dims=(8,))
+    policy = DirectFeatureAllocationPolicy(
+        direct_feature_indices=(0, 2, 3),
+        allocation_hidden_dims=(8,),
+    )
     features, _ = _features_returns()
     variables = policy.init(jax.random.PRNGKey(0), features)
     changed = features.at[..., 4].set(9_999.0)
@@ -287,7 +280,10 @@ def test_unrouted_raw_feature_cannot_change_allocations() -> None:
 
 
 def test_future_feature_change_does_not_change_prior_allocations() -> None:
-    policy = _score_policy(allocation_hidden_dims=(8,))
+    policy = DirectFeatureAllocationPolicy(
+        direct_feature_indices=(0, 2, 4),
+        allocation_hidden_dims=(8,),
+    )
     features, _ = _features_returns()
     variables = policy.init(jax.random.PRNGKey(0), features)
     changed = features.at[-1].set(9_999.0)
@@ -298,13 +294,11 @@ def test_future_feature_change_does_not_change_prior_allocations() -> None:
     )
 
 
-def test_dpo_train_step_updates_score_heads_and_allocation_head() -> None:
+def test_dpo_train_step_updates_allocation_head() -> None:
     features, returns = _features_returns()
     config = DPOConfig(
         learning_rate=1e-2,
         transaction_cost_bps=0.0,
-        accumulation_hidden_dims=(6,),
-        liquidity_exit_hidden_dims=(4,),
         allocation_hidden_dims=(8,),
     )
     state = initialize_dpo_train_state(
@@ -312,20 +306,12 @@ def test_dpo_train_step_updates_score_heads_and_allocation_head() -> None:
         config,
         2,
         5,
-        accumulation_indices=(0, 1),
-        liquidity_indices=(2, 3),
+        direct_feature_indices=(0, 2, 4),
     )
     batch = build_dpo_batch(features, returns)
 
     updated, metrics = train_step(state, batch)
 
-    assert (
-        _tree_delta(
-            state.policy.params["score_heads"],
-            updated.policy.params["score_heads"],
-        )
-        > 0.0
-    )
     assert (
         _tree_delta(
             state.policy.params["allocation_head"],
@@ -342,14 +328,11 @@ def test_dpo_evaluation_predicts_weights_and_loss() -> None:
         jax.random.PRNGKey(1),
         DPOConfig(
             transaction_cost_bps=0.0,
-            accumulation_hidden_dims=(6,),
-            liquidity_exit_hidden_dims=(4,),
             allocation_hidden_dims=(8,),
         ),
         2,
         5,
-        accumulation_indices=(0, 1),
-        liquidity_indices=(2, 3),
+        direct_feature_indices=(0, 2, 4),
     )
     batch = build_dpo_batch(features, returns)
 

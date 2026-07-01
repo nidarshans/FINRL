@@ -11,7 +11,7 @@ from finrl.types import Array
 
 
 class DirectAllocationHead(nn.Module):
-    """Map each asset's scores independently to jointly normalized weights."""
+    """Map each asset's routed features to jointly normalized weights."""
 
     hidden_dims: tuple[int, ...] = ()
     simplex_activation: str = "softmax"
@@ -20,14 +20,14 @@ class DirectAllocationHead(nn.Module):
     use_layer_norm: bool = True
 
     @nn.compact
-    def __call__(self, asset_scores: Array) -> Array:
+    def __call__(self, asset_features: Array) -> Array:
         """Return long-only target weights with cash in the final column."""
 
-        scores = jnp.asarray(asset_scores, dtype=jnp.float32)
+        features = jnp.asarray(asset_features, dtype=jnp.float32)
         if any(hidden_dim <= 0 for hidden_dim in self.hidden_dims):
             raise ValueError("Every allocation hidden dimension must be positive.")
 
-        x = scores
+        x = features
         for index, hidden_dim in enumerate(self.hidden_dims):
             x = nn.Dense(hidden_dim, name=f"hidden_{index}")(x)
             if self.use_layer_norm:
