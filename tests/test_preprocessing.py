@@ -252,6 +252,47 @@ def test_rank_columns_are_not_standardized() -> None:
     ]
 
 
+def test_mean_reversion_feature_is_transformed_not_rank_passthrough() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0),
+        (10.0, 12.0, 14.0),
+        (100.0, 110.0, 120.0),
+    )
+    train = FeatureBundle(
+        asset_features=train.asset_features.with_columns(
+            pl.when(pl.col("ticker") == "AAA")
+            .then(pl.col("return"))
+            .otherwise(pl.col("return") + 10.0)
+            .alias("mr_ewma50_vol_gap")
+        ),
+        macro_features=train.macro_features,
+        spectral_features=train.spectral_features,
+        decision_dates=train.decision_dates,
+        tickers=train.tickers,
+        asset_feature_columns=(
+            *train.asset_feature_columns,
+            "mr_ewma50_vol_gap",
+        ),
+        macro_feature_columns=train.macro_feature_columns,
+        spectral_feature_columns=train.spectral_feature_columns,
+    )
+
+    fitted = fit_preprocessors(train, PreprocessingConfig(rolling_window=2))
+    transformed = transform_features(train, fitted)
+
+    assert "mr_ewma50_vol_gap" in fitted.asset.transformed_columns
+    assert "mr_ewma50_vol_gap" not in fitted.asset.passthrough_columns
+    assert_allclose(
+        transformed.asset_features.filter(pl.col("ticker") == "AAA")[
+            "mr_ewma50_vol_gap"
+        ].to_list(),
+        [0.0, 0.707107, 0.707107],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
 def test_clipping_runs_before_rolling_standardization() -> None:
     train = _bundle(
         ("2024-01-05", "2024-01-12"),

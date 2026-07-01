@@ -54,10 +54,10 @@ def test_component_index_order_is_stable() -> None:
 
 def test_selected_feature_indices_raise_for_missing_columns() -> None:
     columns = tuple(
-        column for column in _feature_columns() if column != "acc_macd_improvement"
+        column for column in _feature_columns() if column != "acc_price_drift"
     )
 
-    with pytest.raises(ValueError, match="acc_macd_improvement"):
+    with pytest.raises(ValueError, match="acc_price_drift"):
         selected_feature_indices(columns)
 
 
@@ -90,5 +90,5 @@ def test_score_head_slices_have_expected_shapes() -> None:
         routing.liquidity_exit_indices,
     )
 
-    assert accumulation.shape == (2, 3, 11)
-    assert liquidity.shape == (2, 3, 6)
+    assert accumulation.shape == (2, 3, 8)
+    assert liquidity.shape == (2, 3, 3)

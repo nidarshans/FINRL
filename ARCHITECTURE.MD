@@ -104,22 +104,16 @@ The accumulation head receives:
 2. `acc_liquidity_growth`
 3. `acc_vol_compression`
 4. `acc_low_vol`
-5. `acc_macd_improvement`
-6. `acc_klinger_improvement`
-7. `acc_macd_bullish_hist`
-8. `acc_klinger_bullish_hist`
-9. `acc_macd_early`
-10. `acc_klinger_early`
-11. `acc_momentum_quality`
+5. `acc_klinger_improvement`
+6. `acc_klinger_bullish_hist`
+7. `acc_momentum_quality`
+8. `mr_ewma50_vol_gap`
 
 The liquidity-exit head receives:
 
-1. `liq_amihud_trend`
-2. `liq_liquidity_deterioration`
-3. `liq_klinger_deterioration`
-4. `liq_vol_expansion`
-5. `liq_liquidity_shock`
-6. `liq_momentum_quality`
+1. `liq_liquidity_deterioration`
+2. `liq_klinger_deterioration`
+3. `liq_vol_expansion`
 
 Missing required columns raise `ValueError`. Feature names are converted to
 integer indices before entering JAX/Flax modules. Prefix-only routing is

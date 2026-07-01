@@ -10,22 +10,16 @@ ACCUMULATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "acc_liquidity_growth",
     "acc_vol_compression",
     "acc_low_vol",
-    "acc_macd_improvement",
     "acc_klinger_improvement",
-    "acc_macd_bullish_hist",
     "acc_klinger_bullish_hist",
-    "acc_macd_early",
-    "acc_klinger_early",
     "acc_momentum_quality",
+    "mr_ewma50_vol_gap",
 )
 
 LIQUIDITY_EXIT_FEATURE_COLUMNS: tuple[str, ...] = (
-    "liq_amihud_trend",
     "liq_liquidity_deterioration",
     "liq_klinger_deterioration",
     "liq_vol_expansion",
-    "liq_liquidity_shock",
-    "liq_momentum_quality",
 )
 
 

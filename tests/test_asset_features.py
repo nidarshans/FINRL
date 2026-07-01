@@ -126,6 +126,7 @@ def test_compute_asset_features_contains_required_columns() -> None:
         "liq_momentum_quality",
         "acc_vol_compression",
         "acc_low_vol",
+        "mr_ewma50_vol_gap",
         "acc_macd_improvement",
         "acc_klinger_improvement",
         "acc_macd_early",
@@ -154,6 +155,73 @@ def test_compute_asset_features_contains_required_columns() -> None:
     assert expected_columns.issubset(features.columns)
     assert "accumulation_score" not in features.columns
     assert "liquidity_exit_score" not in features.columns
+
+
+def test_mean_reversion_feature_is_raw_trailing_and_per_ticker() -> None:
+    dates = [date(2024, 1, day) for day in range(1, 7)]
+    aaa_close = np.array([10.0, 11.0, 10.0, 12.0, 11.0, 13.0])
+    bbb_close = np.array([100.0, 98.0, 101.0, 97.0, 102.0, 96.0])
+
+    def rows(ticker: str, close: np.ndarray) -> list[dict[str, object]]:
+        return [
+            {
+                "date": day,
+                "ticker": ticker,
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "adj_close": price,
+                "volume": 100.0,
+            }
+            for day, price in zip(dates, close, strict=True)
+        ]
+
+    data = pl.DataFrame(rows("AAA", aaa_close) + rows("BBB", bbb_close))
+    config = FeatureConfig(mr_ewma_span=3, mr_vol_window=3)
+    features = compute_asset_features(data, config).sort(["ticker", "date"])
+
+    alpha = 2.0 / (config.mr_ewma_span + 1.0)
+    ewma = aaa_close[0]
+    expected = np.nan
+    returns = np.concatenate([[np.nan], aaa_close[1:] / aaa_close[:-1] - 1.0])
+    for index, close in enumerate(aaa_close):
+        if index:
+            ewma = alpha * close + (1.0 - alpha) * ewma
+        if index >= 2:
+            realized_vol = np.std(returns[max(0, index - 2) : index + 1], ddof=1)
+            expected = ((ewma - close) / close) / (realized_vol + 1e-9)
+
+    aaa_last = features.filter(pl.col("ticker") == "AAA")["mr_ewma50_vol_gap"][-1]
+    assert_allclose(aaa_last, expected, rtol=RTOL, atol=ATOL)
+
+    aaa_only = compute_asset_features(pl.DataFrame(rows("AAA", aaa_close)), config)
+    assert_allclose(
+        features.filter(pl.col("ticker") == "AAA")["mr_ewma50_vol_gap"].to_numpy(),
+        aaa_only["mr_ewma50_vol_gap"].to_numpy(),
+        rtol=RTOL,
+        atol=ATOL,
+        equal_nan=True,
+    )
+
+    changed_future = data.with_columns(
+        pl.when((pl.col("ticker") == "AAA") & (pl.col("date") == dates[-1]))
+        .then(999.0)
+        .otherwise(pl.col("close"))
+        .alias("close")
+    )
+    unchanged_date = dates[-2]
+    original_prior = features.filter(
+        (pl.col("ticker") == "AAA") & (pl.col("date") == unchanged_date)
+    )["mr_ewma50_vol_gap"][0]
+    changed_prior = compute_asset_features(changed_future, config).filter(
+        (pl.col("ticker") == "AAA") & (pl.col("date") == unchanged_date)
+    )["mr_ewma50_vol_gap"][0]
+    assert_allclose(changed_prior, original_prior, rtol=RTOL, atol=ATOL)
+
+    assert not {"_mr_ewma", "_mr_gap", "_mr_realized_vol"} & set(features.columns)
+    # The raw formula is returned directly; rolling z-scoring belongs to preprocessing.
+    assert_allclose(aaa_last, expected, rtol=RTOL, atol=ATOL)
 
 
 def test_requested_asset_component_formulas_are_trailing() -> None:

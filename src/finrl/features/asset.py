@@ -232,6 +232,14 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .ewm_mean(span=26, adjust=False)
         .over("ticker")
         .alias("_ema_slow"),
+        pl.col("close")
+        .ewm_mean(span=config.mr_ewma_span, adjust=False)
+        .over("ticker")
+        .alias("_mr_ewma"),
+        pl.col("return")
+        .rolling_std(window_size=config.mr_vol_window, min_samples=2)
+        .over("ticker")
+        .alias("_mr_realized_vol"),
         pl.col("return")
         .rolling_std(window_size=config.realized_vol_window, min_samples=2)
         .over("ticker")
@@ -259,6 +267,9 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         ),
     )
     features = features.with_columns(
+        ((pl.col("_mr_ewma") - pl.col("close")) / pl.col("close")).alias(
+            "_mr_gap"
+        ),
         pl.col("acc_realized_vol").alias("realized_vol"),
         pl.col("_gain")
         .rolling_mean(window_size=config.rsi_window, min_samples=config.rsi_window)
@@ -289,6 +300,9 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .alias("_klinger_slow"),
     )
     features = features.with_columns(
+        (pl.col("_mr_gap") / (pl.col("_mr_realized_vol") + 1e-9)).alias(
+            "mr_ewma50_vol_gap"
+        ),
         (
             -pl.col("acc_realized_vol")
             / (
@@ -443,6 +457,9 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
             "_volume_growth",
             "_ema_fast",
             "_ema_slow",
+            "_mr_ewma",
+            "_mr_gap",
+            "_mr_realized_vol",
             "_klinger_fast",
             "_klinger_slow",
             "_log_close",
