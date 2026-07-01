@@ -15,6 +15,7 @@ class DPOLossMetrics(NamedTuple):
     """Diagnostics emitted by the differentiable portfolio loss."""
 
     mean_log_return: Array
+    mean_active_log_return: Array
     mean_turnover: Array
     max_drawdown: Array
     mean_concentration: Array
@@ -26,15 +27,24 @@ def dpo_loss(
     asset_returns: Array,
     initial_weights: Array,
     config: DPOConfig,
+    spy_returns: Array | None = None,
 ) -> tuple[Array, DPOLossMetrics]:
     """Compute a scan-based differentiable portfolio objective.
 
     ``weights`` has shape ``[T, N + 1]`` and includes cash in the final column.
     ``asset_returns`` has shape ``[T, N]`` and excludes cash.
+    ``spy_returns`` has shape ``[T]`` and is used as the active-return benchmark.
     """
 
     weights_array = jnp.asarray(weights, dtype=jnp.float32)
     returns_array = jnp.asarray(asset_returns, dtype=jnp.float32)
+    benchmark_returns = (
+        jnp.zeros((returns_array.shape[0],), dtype=jnp.float32)
+        if spy_returns is None
+        else jnp.asarray(spy_returns, dtype=jnp.float32)
+    )
+    if benchmark_returns.shape != (returns_array.shape[0],):
+        raise ValueError("spy_returns must have shape [time].")
     initial = jnp.asarray(initial_weights, dtype=jnp.float32)
     transaction_cost_rate = config.transaction_cost_bps / 10000.0
 
@@ -60,8 +70,10 @@ def dpo_loss(
     )
     net_returns, turnovers, drawdowns, concentrations, equities = outputs
     log_returns = jnp.log(1.0 + net_returns + config.eps)
+    spy_log_returns = jnp.log(1.0 + benchmark_returns + config.eps)
+    active_log_returns = log_returns - spy_log_returns
 
-    return_loss = -jnp.mean(log_returns)
+    return_loss = -jnp.mean(active_log_returns)
     turnover_loss = jnp.mean(turnovers)
     drawdown_loss = jnp.mean(drawdowns**2)
     concentration_loss = jnp.mean(concentrations)
@@ -71,6 +83,7 @@ def dpo_loss(
     )
     metrics = DPOLossMetrics(
         mean_log_return=jnp.mean(log_returns),
+        mean_active_log_return=jnp.mean(active_log_returns),
         mean_turnover=turnover_loss,
         max_drawdown=jnp.max(drawdowns),
         mean_concentration=concentration_loss,

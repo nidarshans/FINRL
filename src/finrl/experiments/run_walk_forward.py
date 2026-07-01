@@ -102,6 +102,7 @@ def fit_dpo_train_artifacts(
     config: ExperimentConfig,
     split_index: int = 0,
     feature_routing: FeatureRoutingMetadata | None = None,
+    train_spy: np.ndarray | None = None,
 ) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
     """Fit direct portfolio optimization from decision-date asset features."""
 
@@ -118,6 +119,9 @@ def fit_dpo_train_artifacts(
     batch = build_dpo_batch(
         jnp.asarray(train_features.values, dtype=jnp.float32),
         jnp.asarray(train_returns[:, :-1], dtype=jnp.float32),
+        spy_returns=(
+            None if train_spy is None else jnp.asarray(train_spy, dtype=jnp.float32)
+        ),
         initial_weights=initial_weights,
     )
     return train_dpo(dpo_state, batch)
@@ -136,6 +140,7 @@ def evaluate_dpo_policy(
     batch = DPOBatch(
         asset_features=jnp.asarray(test_features.values, dtype=jnp.float32),
         asset_returns=jnp.asarray(test_returns[:, :-1], dtype=jnp.float32),
+        spy_returns=jnp.asarray(test_spy, dtype=jnp.float32),
         previous_weights=jnp.repeat(initial_weights[None, :], test_returns.shape[0], axis=0),
         drawdowns=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
         previous_turnovers=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
@@ -183,6 +188,7 @@ def fit_train_artifacts(
     returns: pl.DataFrame,
     config: ExperimentConfig,
     split_index: int = 0,
+    spy_returns: pl.DataFrame | None = None,
 ) -> ExperimentArtifacts:
     """Fit preprocessing and optional score-only DPO on train only."""
 
@@ -195,6 +201,9 @@ def fit_train_artifacts(
     dpo_policy_state = None
     dpo_train_metrics = None
     if config.enable_dpo:
+        if spy_returns is None:
+            raise ValueError("DPO training requires SPY returns.")
+        train_spy = _spy_for_dates(spy_returns, train_panel.decision_dates)
         feature_routing = selected_feature_indices(train_panel.feature_columns)
         dpo_policy_state, dpo_train_metrics = fit_dpo_train_artifacts(
             train_panel,
@@ -202,6 +211,7 @@ def fit_train_artifacts(
             config,
             split_index,
             feature_routing,
+            train_spy,
         )
     return ExperimentArtifacts(
         split=split,
@@ -330,6 +340,7 @@ def run_split(
         raw_data.returns,
         config,
         split_index,
+        spy_returns=raw_data.spy_returns,
     )
     result = evaluate_test_split(
         split,

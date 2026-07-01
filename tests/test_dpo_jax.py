@@ -205,6 +205,40 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
     assert_allclose(metrics.final_equity, expected_equity, rtol=1e-6)
 
 
+def test_dpo_loss_optimizes_log_return_relative_to_spy() -> None:
+    config = DPOConfig(
+        transaction_cost_bps=0.0,
+        lambda_turnover=0.0,
+        lambda_drawdown=0.0,
+        lambda_concentration=0.0,
+    )
+    weights = jnp.array([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.float32)
+    returns = jnp.array([[0.03], [-0.01]], dtype=jnp.float32)
+    spy_returns = jnp.array([0.01, 0.02], dtype=jnp.float32)
+    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
+
+    loss, metrics = dpo_loss(
+        weights,
+        returns,
+        initial,
+        config,
+        spy_returns,
+    )
+
+    portfolio_log_returns = jnp.log1p(returns[:, 0] + config.eps)
+    spy_log_returns = jnp.log1p(spy_returns + config.eps)
+    expected_active = jnp.mean(portfolio_log_returns - spy_log_returns)
+    assert_allclose(loss, -expected_active, rtol=1e-6)
+    assert_allclose(metrics.mean_active_log_return, expected_active, rtol=1e-6)
+
+
+def test_dpo_batch_validates_spy_return_shape() -> None:
+    features, returns = _features_returns()
+
+    with pytest.raises(ValueError, match="spy_returns must have shape"):
+        build_dpo_batch(features, returns, spy_returns=jnp.zeros((4, 1)))
+
+
 def test_dpo_loss_scalar() -> None:
     n_steps, n_assets = 20, 10
     weights = jnp.ones((n_steps, n_assets + 1), dtype=jnp.float32) / (n_assets + 1)

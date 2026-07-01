@@ -157,6 +157,7 @@ The `N + 1` output shape is retained for environment and accounting compatibilit
 The DPO objective is a scan-based differentiable backtest. It accounts for:
 
 * Stock returns
+* SPY benchmark returns
 * Cash weight
 * Turnover from previous weights
 * Transaction costs from configured bps
@@ -166,9 +167,9 @@ The DPO objective is a scan-based differentiable backtest. It accounts for:
 * Concentration diagnostics
 
 Current loss behavior follows the code in `finrl.dpo_jax.losses`: it optimizes
-mean log return with a drawdown penalty. Turnover and concentration are reported
-as metrics and have configuration fields, but they are not currently included in
-the loss expression.
+mean active log return relative to SPY with a drawdown penalty. Turnover and
+concentration are reported as metrics and have configuration fields, but they
+are not currently included in the loss expression.
 
 Experiment configuration can disable DPO to run the deterministic
 environment-only equal-weight path.
