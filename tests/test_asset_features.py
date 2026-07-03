@@ -116,6 +116,16 @@ def test_compute_asset_features_contains_required_columns() -> None:
         "acc_klinger",
         "acc_klinger_signal",
         "acc_klinger_hist",
+        "macd_signal_slope",
+        "macd_hist_slope",
+        "macd_signal_strength",
+        "macd_hist_strength",
+        "klinger_signal_slope",
+        "klinger_hist_slope",
+        "klinger_signal_strength",
+        "klinger_hist_strength",
+        "liq_mr_macd_down",
+        "liq_mr_klinger_down",
         "acc_price_drift",
         "acc_liquidity_growth",
         "liq_liquidity_growth",
@@ -224,6 +234,83 @@ def test_mean_reversion_feature_is_raw_trailing_and_per_ticker() -> None:
     assert_allclose(aaa_last, expected, rtol=RTOL, atol=ATOL)
 
 
+def test_strength_and_liquidity_exit_features_are_trailing_per_ticker() -> None:
+    dates = [date(2024, 2, day) for day in range(1, 9)]
+
+    def rows(ticker: str, offset: float) -> list[dict[str, object]]:
+        closes = [10.0, 11.0, 10.5, 12.0, 11.0, 12.5, 11.5, 13.0]
+        return [
+            {
+                "date": day,
+                "ticker": ticker,
+                "open": close + offset,
+                "high": close + offset,
+                "low": close + offset,
+                "close": close + offset,
+                "adj_close": close + offset,
+                "volume": 100.0 + 10.0 * index,
+            }
+            for index, (day, close) in enumerate(zip(dates, closes, strict=True))
+        ]
+
+    data = pl.DataFrame(rows("AAA", 0.0) + rows("BBB", 20.0))
+    config = FeatureConfig(
+        accumulation_window=3,
+        macd_fast_span=2,
+        macd_slow_span=3,
+        macd_signal_span=2,
+        klinger_fast_span=2,
+        klinger_slow_span=3,
+        klinger_signal_span=2,
+        mr_ewma_span=3,
+        mr_vol_window=3,
+    )
+    columns = (
+        "macd_signal_slope",
+        "macd_hist_slope",
+        "macd_signal_strength",
+        "macd_hist_strength",
+        "klinger_signal_slope",
+        "klinger_hist_slope",
+        "klinger_signal_strength",
+        "klinger_hist_strength",
+        "liq_mr_macd_down",
+        "liq_mr_klinger_down",
+    )
+    combined = compute_asset_features(data, config).sort(["ticker", "date"])
+    aaa_only = compute_asset_features(pl.DataFrame(rows("AAA", 0.0)), config).sort(
+        "date"
+    )
+
+    assert_allclose(
+        combined.filter(pl.col("ticker") == "AAA").select(columns).to_numpy(),
+        aaa_only.select(columns).to_numpy(),
+        rtol=RTOL,
+        atol=ATOL,
+        equal_nan=True,
+    )
+
+    changed_future = data.with_columns(
+        pl.when((pl.col("ticker") == "AAA") & (pl.col("date") == dates[-1]))
+        .then(999.0)
+        .otherwise(pl.col("close"))
+        .alias("close")
+    )
+    prior = combined.filter(
+        (pl.col("ticker") == "AAA") & (pl.col("date") == dates[-2])
+    ).select(columns)
+    changed_prior = compute_asset_features(changed_future, config).filter(
+        (pl.col("ticker") == "AAA") & (pl.col("date") == dates[-2])
+    ).select(columns)
+    assert_allclose(
+        prior.to_numpy(),
+        changed_prior.to_numpy(),
+        rtol=RTOL,
+        atol=ATOL,
+        equal_nan=True,
+    )
+
+
 def test_requested_asset_component_formulas_are_trailing() -> None:
     dates = [date(2024, 1, day) for day in range(1, 9)]
     close = np.array([10.0, 10.5, 11.0, 10.8, 11.4, 12.0, 11.7, 12.3])
@@ -250,6 +337,11 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
         klinger_fast_span=2,
         klinger_slow_span=3,
         klinger_signal_span=2,
+        macd_fast_span=2,
+        macd_slow_span=3,
+        macd_signal_span=2,
+        mr_ewma_span=3,
+        mr_vol_window=3,
         liquidity_ratio_window=4,
     )
 
@@ -305,6 +397,26 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
         len(close) - 1,
         3,
     )
+    expected_macd_signal_slope = normalized_slope(
+        features.get_column("acc_macd_signal").to_numpy(),
+        len(close) - 1,
+        3,
+    )
+    expected_macd_hist_slope = normalized_slope(
+        features.get_column("acc_macd_hist").to_numpy(),
+        len(close) - 1,
+        3,
+    )
+    expected_klinger_signal_slope = normalized_slope(
+        features.get_column("acc_klinger_signal").to_numpy(),
+        len(close) - 1,
+        3,
+    )
+    expected_klinger_hist_slope = normalized_slope(
+        features.get_column("acc_klinger_hist").to_numpy(),
+        len(close) - 1,
+        3,
+    )
 
     assert_allclose(row["acc_price_drift"], expected_price_drift, rtol=RTOL, atol=ATOL)
     assert_allclose(row["acc_liquidity_growth"], expected_liquidity_growth, rtol=RTOL, atol=ATOL)
@@ -327,6 +439,16 @@ def test_requested_asset_component_formulas_are_trailing() -> None:
     assert_allclose(row["acc_klinger_early"], expected_klinger_early, rtol=RTOL, atol=ATOL)
     assert_allclose(row["acc_macd_bullish_hist"], expected_macd_bullish, rtol=RTOL, atol=ATOL)
     assert_allclose(row["acc_klinger_bullish_hist"], expected_klinger_bullish, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["macd_signal_slope"], expected_macd_signal_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["macd_hist_slope"], expected_macd_hist_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["klinger_signal_slope"], expected_klinger_signal_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["klinger_hist_slope"], expected_klinger_hist_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["macd_signal_strength"], row["acc_macd_signal"] * expected_macd_signal_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["macd_hist_strength"], row["acc_macd_hist"] * expected_macd_hist_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["klinger_signal_strength"], row["acc_klinger_signal"] * expected_klinger_signal_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["klinger_hist_strength"], row["acc_klinger_hist"] * expected_klinger_hist_slope, rtol=RTOL, atol=ATOL)
+    assert_allclose(row["liq_mr_macd_down"], row["mr_ewma50_vol_gap"] * max(-row["acc_macd_hist"], 0.0), rtol=RTOL, atol=ATOL)
+    assert_allclose(row["liq_mr_klinger_down"], row["mr_ewma50_vol_gap"] * max(-row["acc_klinger_hist"], 0.0), rtol=RTOL, atol=ATOL)
     assert_allclose(row["liq_amihud_trend"], row["amihud_trend"], rtol=RTOL, atol=ATOL)
     assert_allclose(row["liq_dollar_volume_trend"], row["dollar_volume_trend"], rtol=RTOL, atol=ATOL)
     assert_allclose(row["liq_liquidity_deterioration"], row["liquidity_deterioration"], rtol=RTOL, atol=ATOL)

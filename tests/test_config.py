@@ -39,6 +39,10 @@ def test_feature_config_default_trailing_windows() -> None:
     config = FeatureConfig()
 
     assert config.accumulation_window == 40
+    assert config.macd_fast_span == 12
+    assert config.macd_slow_span == 26
+    assert config.macd_signal_span == 9
+    assert config.mr_vol_window == 50
     assert config.realized_vol_window == 20
     assert config.low_vol_window == 120
     assert config.liquidity_ratio_window == 60

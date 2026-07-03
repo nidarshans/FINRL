@@ -9,6 +9,9 @@ DIRECT_ALLOCATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "mr_ewma50_vol_gap",
     "acc_macd_signal",
     "acc_klinger_signal",
+    "macd_signal_strength",
+    "klinger_signal_strength",
+    "acc_momentum_quality"
 )
 
 

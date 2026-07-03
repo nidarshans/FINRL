@@ -18,9 +18,12 @@ class FeatureConfig:
     volume_window: int = 20
     accumulation_window: int = 40
     realized_vol_window: int = 20
-    momentum_quality_window: int = 20
+    momentum_quality_window: int = 40
+    macd_fast_span: int = 12
+    macd_slow_span: int = 26
+    macd_signal_span: int = 9
     mr_ewma_span: int = 50
-    mr_vol_window: int = 20
+    mr_vol_window: int = 50
     low_vol_window: int = 120
     liquidity_ratio_window: int = 60
     klinger_fast_span: int = 34

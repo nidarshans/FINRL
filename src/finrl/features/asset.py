@@ -225,11 +225,11 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .alias("liq_amihud_illiquidity"),
         pl.col("volume").pct_change().over("ticker").alias("_volume_growth"),
         pl.col("close")
-        .ewm_mean(span=12, adjust=False)
+        .ewm_mean(span=config.macd_fast_span, adjust=False)
         .over("ticker")
         .alias("_ema_fast"),
         pl.col("close")
-        .ewm_mean(span=26, adjust=False)
+        .ewm_mean(span=config.macd_slow_span, adjust=False)
         .over("ticker")
         .alias("_ema_slow"),
         pl.col("close")
@@ -364,7 +364,7 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .otherwise(100.0 - (100.0 / (1.0 + pl.col("_avg_gain") / pl.col("_avg_loss"))))
         .alias("acc_rsi"),
         pl.col("acc_macd")
-        .ewm_mean(span=9, adjust=False)
+        .ewm_mean(span=config.macd_signal_span, adjust=False)
         .over("ticker")
         .alias("acc_macd_signal"),
         (pl.col("_klinger_fast") - pl.col("_klinger_slow")).alias("acc_klinger"),
@@ -378,6 +378,50 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
     )
     features = features.with_columns(
         (pl.col("acc_klinger") - pl.col("acc_klinger_signal")).alias("acc_klinger_hist")
+    )
+    features = features.with_columns(
+        rolling_normalized_slope(
+            "acc_macd_signal",
+            config.accumulation_window,
+            "macd_signal_slope",
+        ),
+        rolling_normalized_slope(
+            "acc_macd_hist",
+            config.accumulation_window,
+            "macd_hist_slope",
+        ),
+        rolling_normalized_slope(
+            "acc_klinger_signal",
+            config.accumulation_window,
+            "klinger_signal_slope",
+        ),
+        rolling_normalized_slope(
+            "acc_klinger_hist",
+            config.accumulation_window,
+            "klinger_hist_slope",
+        ),
+    )
+    features = features.with_columns(
+        (pl.col("acc_macd_signal") * pl.col("macd_signal_slope")).alias(
+            "macd_signal_strength"
+        ),
+        (pl.col("acc_macd_hist") * pl.col("macd_hist_slope")).alias(
+            "macd_hist_strength"
+        ),
+        (pl.col("acc_klinger_signal") * pl.col("klinger_signal_slope")).alias(
+            "klinger_signal_strength"
+        ),
+        (pl.col("acc_klinger_hist") * pl.col("klinger_hist_slope")).alias(
+            "klinger_hist_strength"
+        ),
+        (
+            pl.col("mr_ewma50_vol_gap")
+            * (-pl.col("acc_macd_hist")).clip(lower_bound=0.0)
+        ).alias("liq_mr_macd_down"),
+        (
+            pl.col("mr_ewma50_vol_gap")
+            * (-pl.col("acc_klinger_hist")).clip(lower_bound=0.0)
+        ).alias("liq_mr_klinger_down"),
     )
     features = features.with_columns(
         pl.col("amihud_trend").alias("liq_amihud_trend"),
