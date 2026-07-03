@@ -17,6 +17,7 @@ from finrl.dpo_jax import (
     initialize_dpo_train_state,
     predict_weights,
     sparsemax,
+    train_dpo,
     train_step,
 )
 
@@ -126,6 +127,8 @@ def test_direct_allocation_head_supports_configurable_hidden_dims() -> None:
 
 
 def test_dpo_config_validates_hidden_dims() -> None:
+    with pytest.raises(ValueError, match="batch_size"):
+        DPOConfig(batch_size=0)
     with pytest.raises(ValueError, match="allocation_hidden_dims"):
         DPOConfig(allocation_hidden_dims=(64, 0))
     with pytest.raises(ValueError, match="allocation_hidden_activation"):
@@ -320,6 +323,66 @@ def test_dpo_train_step_updates_allocation_head() -> None:
         > 0.0
     )
     assert jnp.isfinite(metrics.mean_log_return)
+
+
+def test_train_dpo_uses_chronological_mini_batches() -> None:
+    features, returns = _features_returns()
+    config = DPOConfig(
+        learning_rate=1e-2,
+        num_epochs=2,
+        batch_size=2,
+        transaction_cost_bps=10.0,
+        allocation_hidden_dims=(8,),
+    )
+    state = initialize_dpo_train_state(
+        jax.random.PRNGKey(4),
+        config,
+        2,
+        5,
+        direct_feature_indices=(0, 2, 4),
+    )
+
+    updated, history = train_dpo(state, build_dpo_batch(features, returns))
+
+    assert len(history) == config.num_epochs
+    assert all(jnp.isfinite(metrics.mean_log_return) for metrics in history)
+    assert (
+        _tree_delta(
+            state.policy.params["allocation_head"],
+            updated.policy.params["allocation_head"],
+        )
+        > 0.0
+    )
+
+
+def test_train_dpo_full_batch_matches_one_train_step() -> None:
+    features, returns = _features_returns()
+    config = DPOConfig(
+        learning_rate=1e-2,
+        num_epochs=1,
+        batch_size=len(features),
+        transaction_cost_bps=0.0,
+        allocation_hidden_dims=(8,),
+    )
+    state = initialize_dpo_train_state(
+        jax.random.PRNGKey(5),
+        config,
+        2,
+        5,
+        direct_feature_indices=(0, 2, 4),
+    )
+    batch = build_dpo_batch(features, returns)
+
+    expected, _ = train_step(state, batch)
+    actual, history = train_dpo(state, batch)
+
+    for expected_leaf, actual_leaf in zip(
+        jax.tree.leaves(expected.policy.params),
+        jax.tree.leaves(actual.policy.params),
+        strict=True,
+    ):
+        assert_allclose(actual_leaf, expected_leaf, rtol=1e-6, atol=1e-7)
+    assert len(history) == 1
 
 
 def test_dpo_evaluation_predicts_weights_and_loss() -> None:

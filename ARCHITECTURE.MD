@@ -56,9 +56,9 @@ feature generation. Feature generation and preprocessing are split-safe:
 3. Never fit on the test window or full dataset.
 4. Compute cross-sectional ranks independently per date.
 
-Asset-level feature groups include momentum, liquidity, volume, relative, and
-Hawkes features. Macro features may be used in offline features or diagnostics.
-Spectral artifacts are not part of the active DPO state.
+Asset-level features are limited to the explicit ten-column direct-allocation
+allowlist. Macro features may be used in offline diagnostics. Spectral artifacts
+are not part of the active DPO state.
 
 ---
 
@@ -85,7 +85,7 @@ The policy path:
 Input and allocation shapes:
 
 ```text
-direct features: (B, N, 3)
+direct features: (B, N, 10)
 weights:         (B, N + 1)
 ```
 
@@ -97,8 +97,15 @@ window. Trailing temporal information belongs in split-safe feature calculations
 The allocation head receives:
 
 1. `mr_ewma50_vol_gap`
-2. `acc_macd_signal`
-3. `acc_klinger_signal`
+2. `ewma50_slope`
+3. `acc_macd_signal`
+4. `acc_klinger_signal`
+5. `macd_signal_strength`
+6. `klinger_signal_strength`
+7. `acc_momentum_quality`
+8. `cmf`
+9. `cmf_cross_signal`
+10. `cmf_days_since_cross`
 
 Missing required columns raise `ValueError`. Feature names are converted to
 integer indices before entering JAX/Flax modules. Prefix-only routing is
@@ -115,7 +122,7 @@ The active DPO data flow is:
 
 ```text
 asset_features: (T, N, F)
-  -> select direct allocation features: (T, N, 3)
+  -> select direct allocation features: (T, N, 10)
   -> shared per-stock DirectAllocationHead with optional hidden dims
   -> logits: (T, N + 1)
   -> simplex activation
@@ -214,12 +221,6 @@ Required benchmark strategies:
 * Equal Weight
 * Risk Parity
 * Momentum Top-K
-
-Required learned-policy ablations:
-
-* Without Hawkes features
-* Without selected accumulation inputs
-* Without selected liquidity-exit inputs
 
 Default walk-forward setup:
 

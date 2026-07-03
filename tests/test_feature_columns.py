@@ -18,6 +18,18 @@ def _feature_columns() -> tuple[str, ...]:
         "acc_macd_signal",
         "mr_ewma50_vol_gap",
         "acc_klinger_signal",
+        "ewma50_slope",
+        "macd_signal_strength",
+        "klinger_signal_strength",
+        "acc_momentum_quality",
+        "cmf",
+        "cmf_cross_signal",
+        "cmf_days_since_cross",
+        "mr_gap_with_rising_ewma",
+        "mr_gap_with_falling_ewma",
+        "cmf_regime_age",
+        "ewma50_slope_up",
+        "ewma50_slope_down",
         "unrouted_diagnostic",
     )
 
@@ -25,8 +37,15 @@ def _feature_columns() -> tuple[str, ...]:
 def test_direct_allocation_feature_columns_are_explicit() -> None:
     assert DIRECT_ALLOCATION_FEATURE_COLUMNS == (
         "mr_ewma50_vol_gap",
+        "ewma50_slope",
         "acc_macd_signal",
         "acc_klinger_signal",
+        "macd_signal_strength",
+        "klinger_signal_strength",
+        "acc_momentum_quality",
+        "cmf",
+        "cmf_cross_signal",
+        "cmf_days_since_cross",
     )
 
 
@@ -58,3 +77,8 @@ def test_unrouted_columns_are_excluded() -> None:
 
     assert "future_return_leakage" not in selected
     assert "unrouted_diagnostic" not in selected
+    assert "mr_gap_with_rising_ewma" not in selected
+    assert "mr_gap_with_falling_ewma" not in selected
+    assert "cmf_regime_age" not in selected
+    assert "ewma50_slope_up" not in selected
+    assert "ewma50_slope_down" not in selected

@@ -7,11 +7,15 @@ from dataclasses import dataclass
 
 DIRECT_ALLOCATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "mr_ewma50_vol_gap",
+    "ewma50_slope",
     "acc_macd_signal",
     "acc_klinger_signal",
     "macd_signal_strength",
     "klinger_signal_strength",
-    "acc_momentum_quality"
+    "acc_momentum_quality",
+    "cmf",
+    "cmf_cross_signal",
+    "cmf_days_since_cross",
 )
 
 

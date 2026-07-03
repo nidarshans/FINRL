@@ -7,9 +7,7 @@ import polars as pl
 from finrl.data.calendar import build_weekly_rebalance_calendar
 from finrl.data.sources import MarketDataBundle
 from finrl.features.asset import compute_asset_features
-from finrl.features.hawkes import compute_hawkes_features
 from finrl.features.macro import compute_macro_features
-from finrl.features.relative import add_asset_relative_features
 from finrl.features.schema import FeatureBundle, FeatureConfig
 
 
@@ -51,12 +49,7 @@ def build_feature_bundle(
 ) -> FeatureBundle:
     """Build aligned Phase 6 features from raw ingested data."""
 
-    asset_features = add_asset_relative_features(
-        compute_asset_features(raw_data.ohlcv, config)
-    )
-    if config.include_hawkes:
-        hawkes = compute_hawkes_features(raw_data.ohlcv)
-        asset_features = asset_features.join(hawkes, on=["date", "ticker"], how="left")
+    asset_features = compute_asset_features(raw_data.ohlcv, config)
 
     macro_features = compute_macro_features(raw_data.macro)
     decision_dates = _decision_dates_from_calendar(raw_data.calendar)

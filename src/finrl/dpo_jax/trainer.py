@@ -150,11 +150,69 @@ def train_dpo(
     state: DPOTrainState,
     batch: DPOBatch,
 ) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
-    """Fit DPO for ``state.config.num_epochs`` over a single batch."""
+    """Fit DPO over chronological mini-batches.
+
+    Chunk boundaries carry the preceding chunk's final target weights so the
+    first turnover charge in each chunk remains continuous. Metrics are
+    evaluated on the complete chronological path after every epoch.
+    """
 
     metrics: list[DPOLossMetrics] = []
     current = state
+    n_steps = int(batch.asset_features.shape[0])
+    if n_steps == 0:
+        raise ValueError("DPO training requires at least one time step.")
+
     for _ in range(state.config.num_epochs):
-        current, epoch_metrics = train_step(current, batch)
+        previous_weights = batch.initial_weights
+        for start in range(0, n_steps, state.config.batch_size):
+            stop = min(start + state.config.batch_size, n_steps)
+            chunk = _slice_batch(batch, start, stop, previous_weights)
+            current, _ = train_step(current, chunk)
+            previous_weights = jax.lax.stop_gradient(
+                _predict_weights(current, chunk.asset_features)[-1]
+            )
+
+        epoch_metrics = _evaluate_metrics(current, batch)
         metrics.append(epoch_metrics)
     return current, tuple(metrics)
+
+
+def _slice_batch(
+    batch: DPOBatch,
+    start: int,
+    stop: int,
+    initial_weights: Array,
+) -> DPOBatch:
+    """Return one chronological training chunk."""
+
+    return DPOBatch(
+        asset_features=batch.asset_features[start:stop],
+        asset_returns=batch.asset_returns[start:stop],
+        spy_returns=batch.spy_returns[start:stop],
+        previous_weights=batch.previous_weights[start:stop],
+        drawdowns=batch.drawdowns[start:stop],
+        previous_turnovers=batch.previous_turnovers[start:stop],
+        initial_weights=initial_weights,
+    )
+
+
+def _predict_weights(state: DPOTrainState, asset_features: Array) -> Array:
+    """Predict weights without introducing an evaluation-module import cycle."""
+
+    policy = build_allocation_policy(state.config, state.direct_feature_indices)
+    return policy.apply({"params": state.policy.params}, asset_features)
+
+
+def _evaluate_metrics(state: DPOTrainState, batch: DPOBatch) -> DPOLossMetrics:
+    """Evaluate epoch metrics over the complete training path."""
+
+    weights = _predict_weights(state, batch.asset_features)
+    _, metrics = dpo_loss(
+        weights,
+        batch.asset_returns,
+        batch.initial_weights,
+        state.config,
+        batch.spy_returns,
+    )
+    return metrics

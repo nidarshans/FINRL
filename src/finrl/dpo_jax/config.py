@@ -28,6 +28,8 @@ class DPOConfig:
     eps: float = 1e-8
 
     def __post_init__(self) -> None:
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)
         _validate_activation("allocation_hidden_activation", self.allocation_hidden_activation)
         _validate_activation(

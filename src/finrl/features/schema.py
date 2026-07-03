@@ -15,6 +15,7 @@ class FeatureConfig:
     rsi_window: int = 14
     trend_window: int = 20
     liquidity_window: int = 20
+    cmf_window: int = 20
     volume_window: int = 20
     accumulation_window: int = 40
     realized_vol_window: int = 20
