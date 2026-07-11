@@ -18,6 +18,7 @@ class AssetFeaturePanel:
     decision_dates: tuple[object, ...]
     tickers: tuple[str, ...]
     feature_columns: tuple[str, ...]
+    tradable_mask: np.ndarray | None = None
 
 
 def build_asset_feature_panel(features: FeatureBundle) -> AssetFeaturePanel:
@@ -55,4 +56,5 @@ def build_asset_feature_panel(features: FeatureBundle) -> AssetFeaturePanel:
         decision_dates=dates,
         tickers=features.tickers,
         feature_columns=features.asset_feature_columns,
+        tradable_mask=np.ones((len(dates), len(features.tickers)), dtype=bool),
     )

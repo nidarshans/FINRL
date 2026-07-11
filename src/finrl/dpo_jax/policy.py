@@ -31,7 +31,7 @@ class DirectFeatureAllocationPolicy(nn.Module):
     simplex_activation: str = "softmax"
 
     @nn.compact
-    def __call__(self, asset_features: Array) -> Array:
+    def __call__(self, asset_features: Array, tradable_mask: Array | None = None) -> Array:
         direct_features = slice_direct_allocation_features(
             asset_features,
             self.direct_feature_indices,
@@ -43,7 +43,7 @@ class DirectFeatureAllocationPolicy(nn.Module):
             output_activation=self.allocation_output_activation,
             use_layer_norm=self.allocation_use_layer_norm,
             name="allocation_head",
-        )(direct_features)
+        )(direct_features, tradable_mask=tradable_mask)
 
 
 def build_allocation_policy(

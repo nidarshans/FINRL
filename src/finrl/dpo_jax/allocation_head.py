@@ -20,7 +20,7 @@ class DirectAllocationHead(nn.Module):
     use_layer_norm: bool = True
 
     @nn.compact
-    def __call__(self, asset_features: Array) -> Array:
+    def __call__(self, asset_features: Array, tradable_mask: Array | None = None) -> Array:
         """Return long-only target weights with cash in the final column."""
 
         features = jnp.asarray(asset_features, dtype=jnp.float32)
@@ -40,15 +40,33 @@ class DirectAllocationHead(nn.Module):
         stock_logits = nn.Dense(1, name="stock_logits")(x).squeeze(axis=-1)
         stock_logits = _activation(self.output_activation)(stock_logits)
 
+        if tradable_mask is None:
+            tradable = jnp.ones_like(stock_logits, dtype=bool)
+        else:
+            tradable = jnp.asarray(tradable_mask, dtype=bool)
+            if tradable.shape != stock_logits.shape:
+                raise ValueError("tradable_mask must match [time, assets].")
+        valid_count = jnp.sum(tradable, axis=-1, keepdims=True)
+        masked_logits = jnp.where(tradable, stock_logits, -jnp.inf)
+
         if self.simplex_activation == "softmax":
-            stock_weights = jax.nn.softmax(stock_logits, axis=-1)
+            stock_weights = jax.nn.softmax(masked_logits, axis=-1)
         elif self.simplex_activation == "sparsemax":
-            stock_weights = sparsemax(stock_logits, axis=-1)
+            stock_weights = sparsemax(masked_logits, axis=-1)
         else:
             raise ValueError(f"Unknown simplex activation: {self.simplex_activation}")
-        cash_weight = jnp.zeros(
-            (*stock_weights.shape[:-1], 1),
-            dtype=stock_weights.dtype,
+        stock_weights = jnp.where(valid_count > 0, stock_weights, 0.0)
+        cash_weight = jnp.where(
+            valid_count > 0,
+            0.0,
+            1.0,
+        ).astype(stock_weights.dtype)
+        cash_weight = cash_weight.reshape(*stock_weights.shape[:-1], 1)
+        # Keep the cash fallback shape explicit for both batched and unbatched use.
+        cash_weight = jnp.where(
+            valid_count > 0,
+            jnp.zeros_like(cash_weight),
+            jnp.ones_like(cash_weight),
         )
         return jnp.concatenate([stock_weights, cash_weight], axis=-1)
 

@@ -52,7 +52,14 @@ def _price_frame_to_macro_polars(
 
 
 def _yfinance_frame_to_polars(frame: pd.DataFrame, tickers: tuple[str, ...]) -> pl.DataFrame:
-    """Convert a yfinance DataFrame into canonical long OHLCV Polars data."""
+    """Convert yfinance data into a consistently adjusted OHLCV table.
+
+    yfinance can return unadjusted OHLC alongside adjusted close.  Using the
+    raw OHLC for features and returns creates artificial split/distribution
+    jumps, so the close adjustment factor is applied to every price field.
+    Missing observations are preserved for downstream validation instead of
+    being converted into zero-priced securities.
+    """
 
     if frame.empty:
         raise ValueError("yfinance returned no OHLCV rows.")
@@ -82,13 +89,23 @@ def _yfinance_frame_to_polars(frame: pd.DataFrame, tickers: tuple[str, ...]) -> 
     if "adj_close" not in long_frame.columns:
         long_frame["adj_close"] = long_frame["close"]
     polars_frame = enforce_ohlcv_schema(pl.from_pandas(long_frame))
-    return (
-        polars_frame.with_columns(
-            pl.col("open", "high", "low", "close", "adj_close", "volume")
-            .fill_null(0)
+    adjusted = polars_frame.with_columns(
+        pl.when(
+            (pl.col("close") > 0.0)
+            & (pl.col("adj_close") > 0.0)
+            & pl.col("close").is_finite()
+            & pl.col("adj_close").is_finite()
         )
-        .sort(["ticker", "date"])
+        .then(pl.col("adj_close") / pl.col("close"))
+        .otherwise(None)
+        .alias("_adjustment_factor")
+    ).with_columns(
+        [
+            (pl.col(column) * pl.col("_adjustment_factor")).alias(column)
+            for column in ("open", "high", "low", "close")
+        ]
     )
+    return adjusted.drop("_adjustment_factor").sort(["ticker", "date"])
 
 
 def download_ohlcv_yfinance(

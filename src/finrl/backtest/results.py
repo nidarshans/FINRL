@@ -20,6 +20,13 @@ class PerformanceMetrics:
     mean_turnover: float
     total_transaction_cost: float
     spy_relative_alpha: float
+    sharpe_ratio: float = 0.0
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    tracking_error: float = 0.0
+    information_ratio: float = 0.0
+    beta: float = 0.0
+    regression_alpha: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +117,32 @@ def calculate_performance_metrics(
     annualized_return = float(curve[-1] ** (annualizer / returns.size) - 1.0)
     volatility = float(np.std(returns, ddof=0) * np.sqrt(annualizer))
     spy_cumulative_return = float(spy_curve[-1] - 1.0)
+    mean_return = float(np.mean(returns))
+    sharpe = mean_return / float(np.std(returns, ddof=0)) * np.sqrt(annualizer) if np.std(returns) > 0 else 0.0
+    downside = np.minimum(returns, 0.0)
+    downside_dev = float(np.sqrt(np.mean(downside**2)) * np.sqrt(annualizer))
+    sortino = mean_return * annualizer / downside_dev if downside_dev > 0 else 0.0
+    max_dd = max_drawdown_from_curve(curve)
+    calmar = annualized_return / max_dd if max_dd > 0 else 0.0
+    active = returns - spy_returns
+    tracking_error = float(np.std(active, ddof=0) * np.sqrt(annualizer))
+    information_ratio = float(np.mean(active) * annualizer / tracking_error) if tracking_error > 0 else 0.0
+    benchmark_var = float(np.var(spy_returns, ddof=0))
+    beta = float(np.cov(returns, spy_returns, ddof=0)[0, 1] / benchmark_var) if benchmark_var > 0 else 0.0
+    regression_alpha = float((mean_return - beta * float(np.mean(spy_returns))) * annualizer)
     return PerformanceMetrics(
         cumulative_return=cumulative_return,
         annualized_return=annualized_return,
         volatility=volatility,
-        max_drawdown=max_drawdown_from_curve(curve),
+        max_drawdown=max_dd,
         mean_turnover=float(np.mean(turnovers_array)),
         total_transaction_cost=float(np.sum(costs_array)),
         spy_relative_alpha=cumulative_return - spy_cumulative_return,
+        sharpe_ratio=sharpe,
+        sortino_ratio=sortino,
+        calmar_ratio=calmar,
+        tracking_error=tracking_error,
+        information_ratio=information_ratio,
+        beta=beta,
+        regression_alpha=regression_alpha,
     )

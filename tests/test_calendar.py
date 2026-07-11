@@ -151,7 +151,7 @@ def test_compute_open_to_open_returns_supports_daily_holding_period() -> None:
     assert_allclose(row["return"], 102.0 / 101.0 - 1.0, rtol=RTOL, atol=ATOL)
 
 
-def test_compute_open_to_open_returns_treats_zero_price_as_missing_data() -> None:
+def test_compute_open_to_open_returns_excludes_zero_price_as_missing_data() -> None:
     prices = _two_week_ohlcv().with_columns(
         pl.when(
             pl.col("date").is_in([date(2024, 1, 8), date(2024, 1, 9)])
@@ -164,7 +164,10 @@ def test_compute_open_to_open_returns_treats_zero_price_as_missing_data() -> Non
 
     returns = compute_open_to_open_returns(prices, calendar)
 
-    assert returns.head(2).get_column("return").to_list() == [0.0, 0.0]
+    assert returns.filter(
+        pl.col("decision_date").is_in([date(2024, 1, 5), date(2024, 1, 8)])
+    ).is_empty()
+    assert (returns.get_column("return") != 0.0).all()
 
 
 def test_align_to_trading_calendar_filters_dates() -> None:

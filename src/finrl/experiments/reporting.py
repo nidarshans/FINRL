@@ -366,6 +366,13 @@ def metrics_to_frame(result: WalkForwardResult) -> pl.DataFrame:
                 "portfolio_max_drawdown": metrics.max_drawdown,
                 "portfolio_mean_turnover": metrics.mean_turnover,
                 "portfolio_total_transaction_cost": metrics.total_transaction_cost,
+                "portfolio_sharpe_ratio": metrics.sharpe_ratio,
+                "portfolio_sortino_ratio": metrics.sortino_ratio,
+                "portfolio_calmar_ratio": metrics.calmar_ratio,
+                "tracking_error": metrics.tracking_error,
+                "information_ratio": metrics.information_ratio,
+                "beta": metrics.beta,
+                "regression_alpha": metrics.regression_alpha,
             }
         )
     return pl.DataFrame(rows)

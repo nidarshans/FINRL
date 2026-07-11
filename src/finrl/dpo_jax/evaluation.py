@@ -17,7 +17,11 @@ def predict_weights(state: DPOTrainState, batch: DPOBatch) -> Array:
         state.config,
         state.direct_feature_indices,
     )
-    return policy.apply({"params": state.policy.params}, batch.asset_features)
+    return policy.apply(
+        {"params": state.policy.params},
+        batch.asset_features,
+        tradable_mask=batch.tradable_mask,
+    )
 
 
 def evaluate_dpo(state: DPOTrainState, batch: DPOBatch) -> tuple[Array, DPOLossMetrics]:

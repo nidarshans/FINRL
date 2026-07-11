@@ -12,9 +12,11 @@ from finrl.env.accounting import (
     calculate_gross_portfolio_return,
     calculate_net_portfolio_return,
     calculate_transaction_cost,
+    calculate_liquidity_transaction_cost,
     calculate_turnover,
     evolve_portfolio_weights,
     keep_top_n_risky_weights,
+    cap_risky_weights,
     normalize_long_only_weights,
     update_portfolio_value,
     update_running_peak,
@@ -37,6 +39,10 @@ class EnvConfig(NamedTuple):
     sortino_downside_penalty: float = 0.0
     cash_index: int = -1
     top_n_positions: int | None = None
+    max_position_weight: float | None = None
+    average_dollar_volume: float | None = None
+    spread_bps: float = 0.0
+    impact_bps: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -82,10 +88,22 @@ def environment_step(
             config.top_n_positions,
             cash_index=config.cash_index,
         )
+    if config.max_position_weight is not None:
+        executed_weights = cap_risky_weights(
+            executed_weights,
+            config.max_position_weight,
+            cash_index=config.cash_index,
+        )
     turnover = calculate_turnover(state.weights, executed_weights)
-    transaction_cost = calculate_transaction_cost(
-        turnover, config.transaction_cost_rate
-    )
+    transaction_cost = calculate_transaction_cost(turnover, config.transaction_cost_rate)
+    if config.average_dollar_volume is not None:
+        transaction_cost = transaction_cost + calculate_liquidity_transaction_cost(
+            turnover,
+            state.portfolio_value,
+            config.average_dollar_volume,
+            config.spread_bps,
+            config.impact_bps,
+        )
     gross_return = calculate_gross_portfolio_return(executed_weights, asset_returns)
     net_return = calculate_net_portfolio_return(gross_return, transaction_cost)
     portfolio_value = update_portfolio_value(state.portfolio_value, net_return)

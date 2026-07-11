@@ -85,7 +85,14 @@ def compute_open_to_open_returns(
 ) -> pl.DataFrame:
     """Compute holding returns from execution open to next execution open."""
 
-    prices = enforce_ohlcv_schema(open_prices).select(["date", "ticker", "open"])
+    prices = (
+        enforce_ohlcv_schema(open_prices)
+        .select(["date", "ticker", "open"])
+        .filter(
+            (pl.col("open") > 0.0)
+            & pl.col("open").is_finite()
+        )
+    )
     required_calendar_cols = {
         "decision_date",
         "execution_date",
@@ -115,9 +122,6 @@ def compute_open_to_open_returns(
         on=["next_execution_date", "ticker"],
         how="inner",
     ).with_columns(
-        pl.when((pl.col("open") > 0.0) & (pl.col("next_open") > 0.0))
-        .then(pl.col("next_open") / pl.col("open") - 1.0)
-        .otherwise(0.0)
-        .alias("return")
+        (pl.col("next_open") / pl.col("open") - 1.0).alias("return")
     )
     return enforce_returns_schema(returns).sort(["ticker", "decision_date"])

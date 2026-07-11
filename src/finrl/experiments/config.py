@@ -44,6 +44,10 @@ class ExperimentConfig:
             raise ValueError(
                 "DPO requires top_n_positions=None so training and execution match."
             )
+        if self.enable_dpo and self.env.max_position_weight is not None:
+            raise ValueError(
+                "DPO requires max_position_weight=None so training and execution match."
+            )
 
     @property
     def annualization_periods(self) -> int:

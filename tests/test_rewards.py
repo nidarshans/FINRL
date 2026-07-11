@@ -85,7 +85,7 @@ def test_hinge_drawdown_penalty_is_zero_below_threshold() -> None:
     assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
 
 
-def test_hinge_drawdown_penalty_is_currently_ignored_above_threshold() -> None:
+def test_hinge_drawdown_penalty_applies_above_threshold() -> None:
     config = RewardConfig(
         drawdown_limit=0.2,
         drawdown_penalty=5.0,
@@ -100,10 +100,10 @@ def test_hinge_drawdown_penalty_is_currently_ignored_above_threshold() -> None:
         config=config,
     )
 
-    assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
+    assert_allclose(reward, -5.0 * 0.03, rtol=RTOL, atol=ATOL)
 
 
-def test_turnover_penalty_is_currently_ignored() -> None:
+def test_turnover_penalty_reduces_reward() -> None:
     config = RewardConfig(turnover_penalty=0.25)
 
     low_turnover_reward = calculate_rewards(
@@ -121,7 +121,7 @@ def test_turnover_penalty_is_currently_ignored() -> None:
         config=config,
     )
 
-    assert_allclose(high_turnover_reward, low_turnover_reward, rtol=RTOL, atol=ATOL)
+    assert_allclose(high_turnover_reward - low_turnover_reward, -0.25 * 0.4, rtol=RTOL, atol=ATOL)
 
 
 def test_default_reward_turnover_penalty_is_only_net_return_effect() -> None:
@@ -170,11 +170,11 @@ def test_smooth_drawdown_penalty_is_finite_and_monotonic() -> None:
 
     assert bool(jnp.isfinite(below))
     assert bool(jnp.isfinite(above))
-    assert_allclose(below, above, rtol=RTOL, atol=ATOL)
+    assert bool(above < below)
     assert bool(jnp.abs(below) < 1e-4)
 
 
-def test_active_risk_penalty_is_currently_ignored() -> None:
+def test_active_risk_penalty_reduces_active_deviation() -> None:
     base = calculate_rewards(
         jnp.array(0.03, dtype=jnp.float32),
         jnp.array(0.01, dtype=jnp.float32),
@@ -190,7 +190,7 @@ def test_active_risk_penalty_is_currently_ignored() -> None:
         RewardConfig(active_risk_penalty=10.0),
     )
 
-    assert_allclose(penalized, base, rtol=RTOL, atol=ATOL)
+    assert_allclose(penalized - base, -10.0 * 0.02**2, rtol=RTOL, atol=ATOL)
     assert bool(jnp.isfinite(penalized))
 
 

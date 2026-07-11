@@ -67,7 +67,7 @@ def test_yfinance_conversion_returns_polars_ohlcv_dataframe() -> None:
     assert data.to_dicts()[0]["open"] == 100.0
 
 
-def test_yfinance_conversion_zero_fills_dates_without_ohlcv_data() -> None:
+def test_yfinance_conversion_preserves_missing_dates_without_zero_filling() -> None:
     columns = pd.MultiIndex.from_product(
         [
             ["AAA", "LATE"],
@@ -103,9 +103,34 @@ def test_yfinance_conversion_zero_fills_dates_without_ohlcv_data() -> None:
     missing_date = data.filter(
         (pl.col("ticker") == "LATE") & (pl.col("date") == pl.date(2024, 1, 5))
     )
-    assert missing_date.select(
+    values = missing_date.select(
         "open", "high", "low", "close", "adj_close", "volume"
-    ).row(0) == (0.0, 0.0, 0.0, 0.0, 0.0, 0)
+    ).row(0)
+    assert values[:5] == (None, None, None, None, None)
+    assert values[5] is None
+
+
+def test_yfinance_conversion_adjusts_all_price_fields_from_adjusted_close() -> None:
+    columns = pd.MultiIndex.from_product(
+        [["AAA"], ["Open", "High", "Low", "Close", "Adj Close", "Volume"]],
+        names=["Ticker", "Price"],
+    )
+    frame = pd.DataFrame(
+        [[100.0, 110.0, 90.0, 100.0, 50.0, 1_000]],
+        index=pd.to_datetime(["2024-01-05"]),
+        columns=columns,
+    )
+    frame.index.name = "Date"
+
+    data = _yfinance_frame_to_polars(frame, ("AAA",))
+
+    assert data.select("open", "high", "low", "close", "adj_close").row(0) == (
+        50.0,
+        55.0,
+        45.0,
+        50.0,
+        50.0,
+    )
 
 
 def test_yfinance_macro_conversion_returns_polars_dataframe() -> None:

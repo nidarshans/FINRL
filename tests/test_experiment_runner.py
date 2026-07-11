@@ -141,6 +141,14 @@ def test_experiment_rejects_top_n_execution_for_dpo() -> None:
         )
 
 
+def test_experiment_rejects_position_cap_execution_for_dpo() -> None:
+    with pytest.raises(ValueError, match="max_position_weight=None"):
+        ExperimentConfig(
+            env=EnvConfig(max_position_weight=0.2),
+            enable_dpo=True,
+        )
+
+
 def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
     result = run_walk_forward_experiment(
         synthetic_experiment_data(),
@@ -229,6 +237,7 @@ def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
         atol=1e-6,
     )
     assert_allclose(result.allocations.get_column("CASH").to_numpy(), 0.0, atol=0.0)
-    for split_result in result.split_results:
-        first_turnover = split_result.portfolio_returns.get_column("turnover")[0]
-        assert_allclose(first_turnover, 2.0, rtol=1e-6, atol=1e-7)
+    first_turnover = result.split_results[0].portfolio_returns.get_column("turnover")[0]
+    second_turnover = result.split_results[1].portfolio_returns.get_column("turnover")[0]
+    assert_allclose(first_turnover, 2.0, rtol=1e-6, atol=1e-7)
+    assert second_turnover < 2.0

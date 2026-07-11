@@ -248,7 +248,7 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
     assert_allclose(metrics.final_equity, expected_equity, rtol=1e-6)
 
 
-def test_dpo_loss_reports_turnover_but_does_not_penalize_it() -> None:
+def test_dpo_loss_penalizes_turnover_when_configured() -> None:
     weights = jnp.array([[1.0, 0.0]], dtype=jnp.float32)
     returns = jnp.array([[0.0]], dtype=jnp.float32)
     initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
@@ -266,9 +266,42 @@ def test_dpo_loss_reports_turnover_but_does_not_penalize_it() -> None:
     base_loss, base_metrics = dpo_loss(weights, returns, initial, base)
     penalized_loss, penalized_metrics = dpo_loss(weights, returns, initial, penalized)
 
-    assert_allclose(penalized_loss, base_loss, rtol=1e-6, atol=1e-8)
+    assert bool(penalized_loss > base_loss)
     assert_allclose(base_metrics.mean_turnover, 2.0, rtol=1e-6)
     assert_allclose(penalized_metrics.mean_turnover, 2.0, rtol=1e-6)
+
+
+def test_dpo_loss_penalizes_concentration_when_configured() -> None:
+    weights = jnp.array([[1.0, 0.0], [0.5, 0.5]], dtype=jnp.float32)
+    returns = jnp.zeros((2, 1), dtype=jnp.float32)
+    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
+    base = DPOConfig(
+        transaction_cost_bps=0.0,
+        lambda_turnover=0.0,
+        lambda_drawdown=0.0,
+        lambda_concentration=0.0,
+    )
+    penalized = DPOConfig(
+        transaction_cost_bps=0.0,
+        lambda_turnover=0.0,
+        lambda_drawdown=0.0,
+        lambda_concentration=10.0,
+    )
+
+    base_loss, base_metrics = dpo_loss(weights, returns, initial, base)
+    penalized_loss, penalized_metrics = dpo_loss(weights, returns, initial, penalized)
+
+    assert bool(penalized_loss > base_loss)
+    assert_allclose(
+        penalized_loss - base_loss,
+        10.0 * penalized_metrics.mean_concentration,
+        rtol=1e-6,
+    )
+    assert_allclose(
+        base_metrics.mean_concentration,
+        penalized_metrics.mean_concentration,
+        rtol=1e-6,
+    )
 
 
 def test_dpo_loss_uses_drifted_weights_for_next_turnover() -> None:

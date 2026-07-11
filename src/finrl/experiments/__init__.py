@@ -1,6 +1,7 @@
 """Experiment runner package."""
 
 from finrl.experiments.artifacts import ExperimentArtifacts, RawExperimentData
+from finrl.backtest.benchmarks import benchmark_actions
 from finrl.experiments.config import ExperimentConfig
 from finrl.experiments.reporting import (
     build_allocation_figure,
@@ -11,6 +12,13 @@ from finrl.experiments.reporting import (
     metrics_to_frame,
     write_report,
 )
+from finrl.experiments.reproducibility import (
+    ExperimentRunMetadata,
+    build_run_metadata,
+    input_fingerprint,
+    save_walk_forward_artifacts,
+)
+from finrl.experiments.gbt_runner import fit_predict_gbt_split, run_gbt_walk_forward
 from finrl.experiments.run_walk_forward import (
     SplitRunResult,
     aggregate_walk_forward_results,
@@ -43,4 +51,11 @@ __all__ = [
     "run_split",
     "run_walk_forward_experiment",
     "write_report",
+    "benchmark_actions",
+    "ExperimentRunMetadata",
+    "build_run_metadata",
+    "input_fingerprint",
+    "save_walk_forward_artifacts",
+    "fit_predict_gbt_split",
+    "run_gbt_walk_forward",
 ]

@@ -110,7 +110,7 @@ def test_calculate_rewards_without_penalties() -> None:
     assert_allclose(reward, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_calculate_rewards_ignores_drawdown_and_turnover_penalty() -> None:
+def test_calculate_rewards_applies_drawdown_and_turnover_penalty() -> None:
     reward = calculate_rewards(
         net_return=jnp.array(0.0, dtype=jnp.float32),
         spy_return=jnp.array(0.0, dtype=jnp.float32),
@@ -124,7 +124,7 @@ def test_calculate_rewards_ignores_drawdown_and_turnover_penalty() -> None:
         ),
     )
 
-    assert_allclose(reward, 0.0, rtol=RTOL, atol=ATOL)
+    assert_allclose(reward, -(2.0 * 0.05 + 0.1 * 0.4), rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_rewards_is_finite_when_spy_is_down() -> None:

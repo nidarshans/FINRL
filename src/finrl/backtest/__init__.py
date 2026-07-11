@@ -33,3 +33,8 @@ __all__ = [
     "slice_returns",
     "validate_split_boundaries",
 ]
+from finrl.backtest.benchmarks import benchmark_actions
+from finrl.backtest.robustness import CapacityEstimate, estimate_capacity, execution_delay_returns, release_gate, stress_transaction_costs, subperiod_metrics
+from finrl.backtest.release import ReleaseValidation, validate_release
+
+__all__ = ["benchmark_actions", "CapacityEstimate", "estimate_capacity", "execution_delay_returns", "release_gate", "stress_transaction_costs", "subperiod_metrics", "ReleaseValidation", "validate_release"]

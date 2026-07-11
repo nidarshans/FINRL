@@ -26,6 +26,7 @@ class DPOBatch(NamedTuple):
     drawdowns: Array
     previous_turnovers: Array
     initial_weights: Array
+    tradable_mask: Array | None = None
 
 
 @struct.dataclass
@@ -71,6 +72,7 @@ def build_dpo_batch(
     asset_returns: Array,
     initial_weights: Array | None = None,
     spy_returns: Array | None = None,
+    tradable_mask: Array | None = None,
 ) -> DPOBatch:
     """Build a cash-initialized batch from decision-date features and returns."""
 
@@ -97,6 +99,13 @@ def build_dpo_batch(
         initial = jnp.asarray(initial_weights, dtype=jnp.float32)
     if initial.shape != (n_assets + 1,):
         raise ValueError("initial_weights must contain one weight per asset plus cash.")
+    mask = (
+        jnp.ones((n_steps, n_assets), dtype=bool)
+        if tradable_mask is None
+        else jnp.asarray(tradable_mask, dtype=bool)
+    )
+    if mask.shape != (n_steps, n_assets):
+        raise ValueError("tradable_mask must have shape [time, assets].")
     previous_weights = jnp.broadcast_to(initial, (n_steps, n_assets + 1))
     return DPOBatch(
         asset_features=features,
@@ -106,6 +115,7 @@ def build_dpo_batch(
         drawdowns=jnp.zeros((n_steps, 1), dtype=jnp.float32),
         previous_turnovers=jnp.zeros((n_steps, 1), dtype=jnp.float32),
         initial_weights=initial,
+        tradable_mask=mask,
     )
 
 
@@ -118,7 +128,11 @@ def train_step(state: DPOTrainState, batch: DPOBatch) -> tuple[DPOTrainState, DP
             state.config,
             state.direct_feature_indices,
         )
-        weights = policy.apply({"params": params}, batch.asset_features)
+        weights = policy.apply(
+            {"params": params},
+            batch.asset_features,
+            tradable_mask=batch.tradable_mask,
+        )
         return dpo_loss(
             weights,
             batch.asset_returns,

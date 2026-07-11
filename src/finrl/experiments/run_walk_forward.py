@@ -46,6 +46,7 @@ class SplitRunResult(NamedTuple):
 
     artifacts: ExperimentArtifacts
     result: SplitResult
+    final_state: EnvState
 
 
 CASH_RETURN_COLUMN = "CASH"
@@ -136,6 +137,11 @@ def fit_dpo_train_artifacts(
             None if train_spy is None else jnp.asarray(train_spy, dtype=jnp.float32)
         ),
         initial_weights=initial_weights,
+        tradable_mask=(
+            None
+            if train_features.tradable_mask is None
+            else jnp.asarray(train_features.tradable_mask, dtype=bool)
+        ),
     )
     return train_dpo(dpo_state, batch)
 
@@ -146,6 +152,7 @@ def evaluate_dpo_policy(
     test_returns: np.ndarray,
     test_spy: np.ndarray,
     config: ExperimentConfig,
+    initial_state: EnvState | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate a frozen DPO policy through the trading environment."""
 
@@ -158,10 +165,15 @@ def evaluate_dpo_policy(
         drawdowns=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
         previous_turnovers=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
         initial_weights=initial_weights,
+        tradable_mask=(
+            None
+            if test_features.tradable_mask is None
+            else jnp.asarray(test_features.tradable_mask, dtype=bool)
+        ),
     )
     actions = predict_weights(policy_state, batch)
     _, step_results = scan_environment(
-        _initial_env_state(test_returns.shape[1], initial_weights),
+        initial_state or _initial_env_state(test_returns.shape[1], initial_weights),
         actions,
         jnp.asarray(test_returns, dtype=jnp.float32),
         jnp.asarray(test_spy, dtype=jnp.float32),
@@ -262,7 +274,8 @@ def evaluate_test_split(
     spy_returns: pl.DataFrame,
     config: ExperimentConfig,
     split_index: int = 0,
-) -> SplitResult:
+    initial_state: EnvState | None = None,
+) -> tuple[SplitResult, EnvState]:
     """Evaluate a split with frozen train-fitted artifacts."""
 
     del split
@@ -279,11 +292,12 @@ def evaluate_test_split(
             test_returns,
             test_spy,
             config,
+            initial_state,
         )
     else:
         actions = _environment_only_actions(test_returns.shape[0], test_returns.shape[1])
         _, step_results = scan_environment(
-            _initial_env_state(test_returns.shape[1]),
+            initial_state or _initial_env_state(test_returns.shape[1]),
             actions,
             jnp.asarray(test_returns, dtype=jnp.float32),
             jnp.asarray(test_spy, dtype=jnp.float32),
@@ -325,7 +339,7 @@ def evaluate_test_split(
     empty_spectral_frame = pl.DataFrame(
         {"decision_date": list(test_dates), "split_index": [split_index] * len(test_dates)}
     )
-    return SplitResult(
+    split_result = SplitResult(
         split_index=split_index,
         train_start=frozen_artifacts.split.train_start,
         train_end=frozen_artifacts.split.train_end,
@@ -339,6 +353,23 @@ def evaluate_test_split(
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
     )
+    if config.enable_dpo:
+        state, _ = scan_environment(
+            initial_state or _initial_env_state(test_returns.shape[1], initial_state.weights if initial_state else None),
+            jnp.asarray(actions, dtype=jnp.float32),
+            jnp.asarray(test_returns, dtype=jnp.float32),
+            jnp.asarray(test_spy, dtype=jnp.float32),
+            config.env,
+        )
+    else:
+        state, _ = scan_environment(
+            initial_state or _initial_env_state(test_returns.shape[1]),
+            jnp.asarray(actions, dtype=jnp.float32),
+            jnp.asarray(test_returns, dtype=jnp.float32),
+            jnp.asarray(test_spy, dtype=jnp.float32),
+            config.env,
+        )
+    return split_result, state
 
 
 def run_split(
@@ -346,6 +377,7 @@ def run_split(
     raw_data: RawExperimentData,
     config: ExperimentConfig,
     split_index: int = 0,
+    initial_state: EnvState | None = None,
 ) -> SplitRunResult:
     """Fit train artifacts and evaluate one frozen test split."""
 
@@ -357,15 +389,16 @@ def run_split(
         split_index,
         spy_returns=raw_data.spy_returns,
     )
-    result = evaluate_test_split(
+    result, final_state = evaluate_test_split(
         split,
         frozen_artifacts,
         raw_data.returns,
         raw_data.spy_returns,
         config,
         split_index,
+        initial_state,
     )
-    return SplitRunResult(artifacts=frozen_artifacts, result=result)
+    return SplitRunResult(artifacts=frozen_artifacts, result=result, final_state=final_state)
 
 
 def aggregate_walk_forward_results(
@@ -422,8 +455,11 @@ def run_walk_forward_experiment(
     """Run all strict walk-forward splits for prepared data."""
 
     splits = generate_walk_forward_splits(raw_data.features.decision_dates, config.walk_forward)
-    split_results = tuple(
-        run_split(split, raw_data, config, split_index).result
-        for split_index, split in enumerate(splits)
-    )
+    split_runs = []
+    state = None
+    for split_index, split in enumerate(splits):
+        split_run = run_split(split, raw_data, config, split_index, state)
+        split_runs.append(split_run)
+        state = split_run.final_state
+    split_results = tuple(split_run.result for split_run in split_runs)
     return aggregate_walk_forward_results(split_results, config)

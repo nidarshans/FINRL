@@ -20,6 +20,8 @@ class GBTConfig:
     score_clip: float = 20.0
     target_horizons: tuple[int, ...] = (5, 20, 60)
     target_weights: tuple[float, ...] = (1.0, 1.0, 1.0)
+    max_position_weight: float | None = None
+    smoothing_alpha: float = 1.0
 
     def __post_init__(self) -> None:
         if self.n_estimators <= 0:
@@ -46,6 +48,10 @@ class GBTConfig:
             raise ValueError("target_weights must match target_horizons.")
         if any(weight < 0.0 for weight in self.target_weights) or sum(self.target_weights) <= 0.0:
             raise ValueError("target_weights must be non-negative with a positive sum.")
+        if self.max_position_weight is not None and not 0.0 < self.max_position_weight <= 1.0:
+            raise ValueError("max_position_weight must be in (0, 1].")
+        if not 0.0 <= self.smoothing_alpha <= 1.0:
+            raise ValueError("smoothing_alpha must be in [0, 1].")
 
     @property
     def normalized_target_weights(self) -> tuple[float, ...]:

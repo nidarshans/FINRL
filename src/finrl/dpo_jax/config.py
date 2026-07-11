@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +17,7 @@ class DPOConfig:
 
     lambda_turnover: float = 0.01
     lambda_drawdown: float = 0.10
-    lambda_concentration: float = 0.01
+    lambda_concentration: float = 0.0
 
     allocation_hidden_dims: tuple[int, ...] = ()
     allocation_hidden_activation: str = "tanh"
@@ -27,6 +28,19 @@ class DPOConfig:
     eps: float = 1e-8
 
     def __post_init__(self) -> None:
+        for name in (
+            "learning_rate",
+            "transaction_cost_bps",
+            "lambda_turnover",
+            "lambda_drawdown",
+            "lambda_concentration",
+            "eps",
+        ):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative.")
+        if self.learning_rate == 0.0 or self.eps == 0.0:
+            raise ValueError("learning_rate and eps must be positive.")
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)
         _validate_activation("allocation_hidden_activation", self.allocation_hidden_activation)
         _validate_activation(

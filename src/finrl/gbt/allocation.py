@@ -6,6 +6,7 @@ import numpy as np
 
 from finrl.gbt.config import GBTConfig
 from finrl.types import Array
+from finrl.portfolio_construction import apply_position_cap
 
 
 def scores_to_weights(scores: Array, config: GBTConfig) -> Array:
@@ -21,4 +22,7 @@ def scores_to_weights(scores: Array, config: GBTConfig) -> Array:
     exp_logits = np.exp(logits)
     stock_weights = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
     cash = np.zeros((values.shape[0], 1), dtype=stock_weights.dtype)
-    return np.concatenate((stock_weights, cash), axis=1).astype(np.float32)
+    output = np.concatenate((stock_weights, cash), axis=1)
+    if config.max_position_weight is not None:
+        output = apply_position_cap(output, config.max_position_weight)
+    return output.astype(np.float32)

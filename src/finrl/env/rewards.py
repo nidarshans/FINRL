@@ -62,15 +62,15 @@ def calculate_rewards(
         else config.drawdown_penalty_type == 1
     )
     drawdown_penalty = jnp.where(use_hinge, hinge_penalty, smooth_penalty)
-    log_return = jnp.log1p(net_return)
+    log_return = jnp.log(jnp.maximum(1.0 + net_return, 1e-8))
     active_return = net_return - spy_return
     downside_shortfall = jnp.maximum(config.sortino_target_return - net_return, 0.0)
     return (
         log_return
-        # - config.drawdown_penalty * drawdown_penalty
+        - config.drawdown_penalty * drawdown_penalty
         - config.sortino_downside_penalty * jnp.square(downside_shortfall)
-        # - config.turnover_penalty * turnover
-        # - config.active_risk_penalty * jnp.square(active_return)
+        - config.turnover_penalty * turnover
+        - config.active_risk_penalty * jnp.square(active_return)
     )
 
 

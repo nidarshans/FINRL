@@ -19,6 +19,24 @@ def calculate_transaction_cost(turnover: Array, cost_rate: float | Array) -> Arr
     return jnp.asarray(cost_rate, dtype=jnp.asarray(turnover).dtype) * turnover
 
 
+def calculate_liquidity_transaction_cost(
+    turnover: Array,
+    portfolio_value: Array,
+    average_dollar_volume: float,
+    spread_bps: float = 0.0,
+    impact_bps: float = 0.0,
+) -> Array:
+    """Estimate spread plus square-root impact cost for traded notional."""
+
+    if average_dollar_volume <= 0.0 or spread_bps < 0.0 or impact_bps < 0.0:
+        raise ValueError("Liquidity inputs must be positive volume and non-negative bps.")
+    participation = jnp.maximum(
+        turnover * portfolio_value / average_dollar_volume, 0.0
+    )
+    rate = (spread_bps + impact_bps * jnp.sqrt(participation)) / 10_000.0
+    return turnover * rate
+
+
 def calculate_gross_portfolio_return(weights: Array, asset_returns: Array) -> Array:
     """Return weighted holding-period portfolio return."""
 
@@ -121,3 +139,17 @@ def keep_top_n_risky_weights(
     keep_mask = keep_mask.at[resolved_cash_index].set(True)
     sparse = jnp.where(keep_mask, weights, 0.0)
     return normalize_long_only_weights(sparse, cash_index=cash_index)
+
+
+def cap_risky_weights(weights: Array, cap: float, cash_index: int = -1) -> Array:
+    """Cap risky positions and direct residual allocation to cash."""
+
+    if cap <= 0.0 or cap > 1.0:
+        raise ValueError("cap must be in (0, 1].")
+    resolved_cash = weights.shape[0] + cash_index if cash_index < 0 else cash_index
+    risky = jnp.arange(weights.shape[0]) != resolved_cash
+    capped = jnp.where(risky, jnp.minimum(weights, cap), weights)
+    residual = jnp.maximum(1.0 - jnp.sum(capped), 0.0)
+    return normalize_long_only_weights(
+        capped.at[resolved_cash].add(residual), cash_index=cash_index
+    )

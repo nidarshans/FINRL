@@ -81,15 +81,20 @@ def dpo_loss(
         (weights_array, returns_array),
     )
     net_returns, turnovers, drawdowns, concentrations, equities = outputs
-    log_returns = jnp.log(1.0 + net_returns + config.eps)
-    spy_log_returns = jnp.log(1.0 + benchmark_returns + config.eps)
+    log_returns = jnp.log(jnp.maximum(1.0 + net_returns, config.eps))
+    spy_log_returns = jnp.log(jnp.maximum(1.0 + benchmark_returns, config.eps))
     active_log_returns = log_returns - spy_log_returns
 
     return_loss = -jnp.mean(active_log_returns)
     turnover_loss = jnp.mean(turnovers)
     drawdown_loss = jnp.mean(drawdowns**2)
     concentration_loss = jnp.mean(concentrations)
-    loss = return_loss + config.lambda_drawdown * drawdown_loss
+    loss = (
+        return_loss
+        + config.lambda_turnover * turnover_loss
+        + config.lambda_drawdown * drawdown_loss
+        + config.lambda_concentration * concentration_loss
+    )
     metrics = DPOLossMetrics(
         mean_log_return=jnp.mean(log_returns),
         mean_active_log_return=jnp.mean(active_log_returns),

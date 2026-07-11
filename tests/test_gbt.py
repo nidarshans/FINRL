@@ -11,7 +11,7 @@ from finrl.features.columns import (
     selected_direct_allocation_indices,
 )
 from finrl.features.panels import AssetFeaturePanel
-from finrl.gbt import GBTConfig, build_training_data, fit_gbt_model, predict_scores, scores_to_weights
+from finrl.gbt import GBTConfig, build_forward_return_targets, build_training_data, fit_gbt_model, predict_scores, scores_to_weights
 
 
 FEATURES = ("unused", *DIRECT_ALLOCATION_FEATURE_COLUMNS)
@@ -46,6 +46,24 @@ def test_training_data_routes_features_and_uses_weighted_targets() -> None:
     assert_allclose(data.targets.reshape(6, 2), returns)
 
 
+def test_forward_targets_use_only_available_forward_rows() -> None:
+    returns = np.array([[0.10], [0.20], [0.30], [0.40]], dtype=np.float32)
+    targets = build_forward_return_targets(returns, (1, 2), (1.0, 1.0))
+
+    assert targets.shape == (3, 1)
+    expected = np.array([
+        (0.10 + (1.10 * 1.20 - 1.0)) / 2.0,
+        (0.20 + (1.20 * 1.30 - 1.0)) / 2.0,
+        (0.30 + (1.30 * 1.40 - 1.0)) / 2.0,
+    ], dtype=np.float32)
+    assert_allclose(targets[:, 0], expected, rtol=1e-6)
+
+
+def test_forward_targets_reject_invalid_horizons() -> None:
+    with pytest.raises(ValueError, match="strictly increasing"):
+        build_forward_return_targets(np.zeros((3, 1)), (2, 1))
+
+
 def test_unrouted_feature_cannot_change_training_matrix() -> None:
     panel = _panel()
     routing = selected_direct_allocation_indices(panel.feature_columns)
@@ -73,6 +91,14 @@ def test_softmax_allocator_is_long_only_and_appends_zero_cash() -> None:
 def test_softmax_allocator_rejects_nonfinite_scores() -> None:
     with pytest.raises(ValueError, match="finite"):
         scores_to_weights(np.array([[np.nan, 0.0]]), GBTConfig())
+
+
+def test_softmax_allocator_applies_position_cap() -> None:
+    weights = scores_to_weights(
+        np.array([[10.0, 0.0, 0.0]]), GBTConfig(max_position_weight=0.5)
+    )
+    assert np.all(weights[:, :-1] <= 0.5 + 1e-6)
+    assert_allclose(weights.sum(axis=1), 1.0)
 
 
 def test_lightgbm_model_fits_and_predicts_deterministically() -> None:
