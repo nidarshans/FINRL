@@ -8,9 +8,9 @@ from finrl.types import Array
 
 
 def calculate_turnover(current_weights: Array, target_weights: Array) -> Array:
-    """Return institutional one-way turnover between two allocations."""
+    """Return full L1 turnover between two allocations."""
 
-    return 0.5 * jnp.sum(jnp.abs(target_weights - current_weights))
+    return jnp.sum(jnp.abs(target_weights - current_weights))
 
 
 def calculate_transaction_cost(turnover: Array, cost_rate: float | Array) -> Array:
@@ -49,6 +49,23 @@ def calculate_drawdown(portfolio_value: Array, peak_value: Array) -> Array:
     """Return drawdown as ``1 - value / peak``."""
 
     return 1.0 - portfolio_value / peak_value
+
+
+def evolve_portfolio_weights(
+    weights: Array,
+    asset_returns: Array,
+    cash_index: int = -1,
+) -> Array:
+    """Return end-of-period weights after holdings experience asset returns."""
+
+    current = jnp.asarray(weights)
+    returns = jnp.asarray(asset_returns, dtype=current.dtype)
+    holding_values = current * (1.0 + returns)
+    return normalize_long_only_weights(
+        holding_values,
+        fallback_weights=current,
+        cash_index=cash_index,
+    )
 
 
 def cash_weights_like(raw_weights: Array, cash_index: int = -1) -> Array:

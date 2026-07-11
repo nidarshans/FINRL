@@ -130,6 +130,9 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .over("ticker")
         .alias("acc_klinger_signal"),
         rolling_normalized_slope(
+            "cmf", config.accumulation_window, "cmf_slope"
+        ),
+        rolling_normalized_slope(
             "acc_macd_signal", config.accumulation_window, "_macd_signal_slope"
         ),
         (

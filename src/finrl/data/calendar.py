@@ -114,5 +114,10 @@ def compute_open_to_open_returns(
         next_execution,
         on=["next_execution_date", "ticker"],
         how="inner",
-    ).with_columns((pl.col("next_open") / pl.col("open") - 1.0).alias("return"))
+    ).with_columns(
+        pl.when((pl.col("open") > 0.0) & (pl.col("next_open") > 0.0))
+        .then(pl.col("next_open") / pl.col("open") - 1.0)
+        .otherwise(0.0)
+        .alias("return")
+    )
     return enforce_returns_schema(returns).sort(["ticker", "decision_date"])

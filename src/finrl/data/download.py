@@ -81,8 +81,14 @@ def _yfinance_frame_to_polars(frame: pd.DataFrame, tickers: tuple[str, ...]) -> 
     long_frame = long_frame.rename(columns=rename_map)
     if "adj_close" not in long_frame.columns:
         long_frame["adj_close"] = long_frame["close"]
-    polars_frame = pl.from_pandas(long_frame)
-    return enforce_ohlcv_schema(polars_frame).sort(["ticker", "date"])
+    polars_frame = enforce_ohlcv_schema(pl.from_pandas(long_frame))
+    return (
+        polars_frame.with_columns(
+            pl.col("open", "high", "low", "close", "adj_close", "volume")
+            .fill_null(0)
+        )
+        .sort(["ticker", "date"])
+    )
 
 
 def download_ohlcv_yfinance(

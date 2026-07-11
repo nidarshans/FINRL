@@ -11,9 +11,8 @@ class DPOConfig:
 
     learning_rate: float = 3e-4
     num_epochs: int = 5
-    batch_size: int = 32
 
-    transaction_cost_bps: float = 5.0
+    transaction_cost_bps: float = 10.0
 
     lambda_turnover: float = 0.01
     lambda_drawdown: float = 0.10
@@ -28,8 +27,6 @@ class DPOConfig:
     eps: float = 1e-8
 
     def __post_init__(self) -> None:
-        if self.batch_size <= 0:
-            raise ValueError("batch_size must be positive.")
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)
         _validate_activation("allocation_hidden_activation", self.allocation_hidden_activation)
         _validate_activation(
@@ -37,6 +34,10 @@ class DPOConfig:
             self.allocation_output_activation,
             output=True,
         )
+        if self.allocation_output_activation != "identity":
+            raise ValueError(
+                "allocation_output_activation must be 'identity' so logits remain unrestricted."
+            )
         if self.simplex_activation not in {"softmax", "sparsemax"}:
             raise ValueError("simplex_activation must be 'softmax' or 'sparsemax'.")
 

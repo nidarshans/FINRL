@@ -23,6 +23,7 @@ def _feature_columns() -> tuple[str, ...]:
         "klinger_signal_strength",
         "acc_momentum_quality",
         "cmf",
+        "cmf_slope",
         "cmf_cross_signal",
         "cmf_days_since_cross",
         "mr_gap_with_rising_ewma",
@@ -44,6 +45,7 @@ def test_direct_allocation_feature_columns_are_explicit() -> None:
         "klinger_signal_strength",
         "acc_momentum_quality",
         "cmf",
+        "cmf_slope",
         "cmf_cross_signal",
         "cmf_days_since_cross",
     )

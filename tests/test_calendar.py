@@ -151,6 +151,22 @@ def test_compute_open_to_open_returns_supports_daily_holding_period() -> None:
     assert_allclose(row["return"], 102.0 / 101.0 - 1.0, rtol=RTOL, atol=ATOL)
 
 
+def test_compute_open_to_open_returns_treats_zero_price_as_missing_data() -> None:
+    prices = _two_week_ohlcv().with_columns(
+        pl.when(
+            pl.col("date").is_in([date(2024, 1, 8), date(2024, 1, 9)])
+        )
+        .then(0.0)
+        .otherwise(pl.col("open"))
+        .alias("open")
+    )
+    calendar = build_daily_rebalance_calendar(prices)
+
+    returns = compute_open_to_open_returns(prices, calendar)
+
+    assert returns.head(2).get_column("return").to_list() == [0.0, 0.0]
+
+
 def test_align_to_trading_calendar_filters_dates() -> None:
     data = _two_week_ohlcv()
     calendar = pl.DataFrame({"date": ["2024-01-05", "2024-01-08"]}).with_columns(

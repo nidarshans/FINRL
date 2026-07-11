@@ -69,13 +69,7 @@ def test_build_feature_bundle_aligns_to_friday_decision_dates() -> None:
     features = build_feature_bundle(
         bundle,
         FeatureConfig(
-            rsi_window=2,
-            trend_window=3,
-            liquidity_window=2,
-            volume_window=2,
-            spectral_window=2,
             spectral_dim=20,
-            use_spectral_features=False,
         ),
     )
 

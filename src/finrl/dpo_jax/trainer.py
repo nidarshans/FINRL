@@ -150,51 +150,23 @@ def train_dpo(
     state: DPOTrainState,
     batch: DPOBatch,
 ) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
-    """Fit DPO over chronological mini-batches.
+    """Fit DPO over one complete chronological backtest per epoch.
 
-    Chunk boundaries carry the preceding chunk's final target weights so the
-    first turnover charge in each chunk remains continuous. Metrics are
-    evaluated on the complete chronological path after every epoch.
+    Equity, running peak, drifted holdings, and their gradients must remain on
+    one scan path. Splitting optimizer updates into time chunks would reset or
+    truncate that state and optimize a different objective.
     """
 
     metrics: list[DPOLossMetrics] = []
     current = state
-    n_steps = int(batch.asset_features.shape[0])
-    if n_steps == 0:
+    if int(batch.asset_features.shape[0]) == 0:
         raise ValueError("DPO training requires at least one time step.")
 
     for _ in range(state.config.num_epochs):
-        previous_weights = batch.initial_weights
-        for start in range(0, n_steps, state.config.batch_size):
-            stop = min(start + state.config.batch_size, n_steps)
-            chunk = _slice_batch(batch, start, stop, previous_weights)
-            current, _ = train_step(current, chunk)
-            previous_weights = jax.lax.stop_gradient(
-                _predict_weights(current, chunk.asset_features)[-1]
-            )
-
+        current, _ = train_step(current, batch)
         epoch_metrics = _evaluate_metrics(current, batch)
         metrics.append(epoch_metrics)
     return current, tuple(metrics)
-
-
-def _slice_batch(
-    batch: DPOBatch,
-    start: int,
-    stop: int,
-    initial_weights: Array,
-) -> DPOBatch:
-    """Return one chronological training chunk."""
-
-    return DPOBatch(
-        asset_features=batch.asset_features[start:stop],
-        asset_returns=batch.asset_returns[start:stop],
-        spy_returns=batch.spy_returns[start:stop],
-        previous_weights=batch.previous_weights[start:stop],
-        drawdowns=batch.drawdowns[start:stop],
-        previous_turnovers=batch.previous_turnovers[start:stop],
-        initial_weights=initial_weights,
-    )
 
 
 def _predict_weights(state: DPOTrainState, asset_features: Array) -> Array:

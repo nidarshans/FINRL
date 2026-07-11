@@ -26,6 +26,10 @@ class DirectAllocationHead(nn.Module):
         features = jnp.asarray(asset_features, dtype=jnp.float32)
         if any(hidden_dim <= 0 for hidden_dim in self.hidden_dims):
             raise ValueError("Every allocation hidden dimension must be positive.")
+        if self.output_activation != "identity":
+            raise ValueError(
+                "Allocation output activation must be 'identity' so logits remain unrestricted."
+            )
 
         x = features
         for index, hidden_dim in enumerate(self.hidden_dims):

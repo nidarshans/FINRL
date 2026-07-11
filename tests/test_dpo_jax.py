@@ -20,6 +20,7 @@ from finrl.dpo_jax import (
     train_dpo,
     train_step,
 )
+from finrl.env.trading_env import EnvConfig, EnvState, scan_environment
 
 
 def _tree_delta(left: object, right: object) -> float:
@@ -126,13 +127,23 @@ def test_direct_allocation_head_supports_configurable_hidden_dims() -> None:
     assert bool(jnp.all(weights >= 0.0))
 
 
+def test_direct_allocation_head_rejects_restricted_output_logits() -> None:
+    head = DirectAllocationHead(output_activation="sigmoid")
+
+    with pytest.raises(ValueError, match="must be 'identity'"):
+        head.init(
+            jax.random.PRNGKey(0),
+            jnp.ones((1, 2, 3), dtype=jnp.float32),
+        )
+
+
 def test_dpo_config_validates_hidden_dims() -> None:
-    with pytest.raises(ValueError, match="batch_size"):
-        DPOConfig(batch_size=0)
     with pytest.raises(ValueError, match="allocation_hidden_dims"):
         DPOConfig(allocation_hidden_dims=(64, 0))
     with pytest.raises(ValueError, match="allocation_hidden_activation"):
         DPOConfig(allocation_hidden_activation="swish")
+    with pytest.raises(ValueError, match="must be 'identity'"):
+        DPOConfig(allocation_output_activation="sigmoid")
 
 
 def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax() -> None:
@@ -140,6 +151,7 @@ def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax()
 
     assert config.allocation_hidden_dims == ()
     assert config.simplex_activation == "softmax"
+    assert config.transaction_cost_bps == 10.0
 
 
 def test_direct_feature_policy_returns_normalized_weights() -> None:
@@ -214,15 +226,112 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
 
     loss, metrics = dpo_loss(weights, returns, initial, config)
 
-    expected_net_returns = jnp.array([0.01 - 0.001, -0.01 - 0.001], dtype=jnp.float32)
+    drifted_first_weights = jnp.array([0.51 / 1.01, 0.50 / 1.01], dtype=jnp.float32)
+    second_turnover = jnp.sum(
+        jnp.abs(weights[1] - drifted_first_weights)
+    )
+    expected_net_returns = jnp.array(
+        [0.01 - 0.001, -0.01 - 0.001 * second_turnover],
+        dtype=jnp.float32,
+    )
     expected_equity = jnp.prod(1.0 + expected_net_returns)
     assert_allclose(
         loss,
         -jnp.mean(jnp.log(1.0 + expected_net_returns + config.eps)),
         rtol=1e-6,
     )
-    assert_allclose(metrics.mean_turnover, jnp.array(1.0, dtype=jnp.float32), rtol=1e-6)
+    assert_allclose(
+        metrics.mean_turnover,
+        (1.0 + second_turnover) / 2.0,
+        rtol=1e-6,
+    )
     assert_allclose(metrics.final_equity, expected_equity, rtol=1e-6)
+
+
+def test_dpo_loss_reports_turnover_but_does_not_penalize_it() -> None:
+    weights = jnp.array([[1.0, 0.0]], dtype=jnp.float32)
+    returns = jnp.array([[0.0]], dtype=jnp.float32)
+    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
+    base = DPOConfig(
+        transaction_cost_bps=0.0,
+        lambda_turnover=0.0,
+        lambda_drawdown=0.0,
+    )
+    penalized = DPOConfig(
+        transaction_cost_bps=0.0,
+        lambda_turnover=100.0,
+        lambda_drawdown=0.0,
+    )
+
+    base_loss, base_metrics = dpo_loss(weights, returns, initial, base)
+    penalized_loss, penalized_metrics = dpo_loss(weights, returns, initial, penalized)
+
+    assert_allclose(penalized_loss, base_loss, rtol=1e-6, atol=1e-8)
+    assert_allclose(base_metrics.mean_turnover, 2.0, rtol=1e-6)
+    assert_allclose(penalized_metrics.mean_turnover, 2.0, rtol=1e-6)
+
+
+def test_dpo_loss_uses_drifted_weights_for_next_turnover() -> None:
+    weights = jnp.array(
+        [[0.5, 0.5, 0.0], [0.5, 0.5, 0.0]],
+        dtype=jnp.float32,
+    )
+    returns = jnp.array([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.float32)
+    initial = weights[0]
+
+    _, metrics = dpo_loss(
+        weights,
+        returns,
+        initial,
+        DPOConfig(transaction_cost_bps=0.0, lambda_drawdown=0.0),
+    )
+
+    expected_second_turnover = 1.0 / 3.0
+    assert_allclose(
+        metrics.mean_turnover,
+        expected_second_turnover / 2.0,
+        rtol=1e-6,
+    )
+
+
+def test_dpo_loss_matches_environment_accounting_path() -> None:
+    weights = jnp.array(
+        [[0.6, 0.4, 0.0], [0.3, 0.7, 0.0]],
+        dtype=jnp.float32,
+    )
+    risky_returns = jnp.array(
+        [[0.10, -0.05], [-0.02, 0.04]],
+        dtype=jnp.float32,
+    )
+    full_returns = jnp.concatenate(
+        [risky_returns, jnp.zeros((2, 1), dtype=jnp.float32)],
+        axis=1,
+    )
+    initial = jnp.array([0.0, 0.0, 1.0], dtype=jnp.float32)
+    config = DPOConfig(
+        transaction_cost_bps=10.0,
+        lambda_turnover=0.0,
+        lambda_drawdown=0.0,
+    )
+
+    _, metrics = dpo_loss(weights, risky_returns, initial, config)
+    final_state, step_results = scan_environment(
+        EnvState(
+            weights=initial,
+            portfolio_value=jnp.array(1.0, dtype=jnp.float32),
+            peak_value=jnp.array(1.0, dtype=jnp.float32),
+            drawdown=jnp.array(0.0, dtype=jnp.float32),
+            previous_turnover=jnp.array(0.0, dtype=jnp.float32),
+            step=jnp.array(0, dtype=jnp.int32),
+        ),
+        weights,
+        full_returns,
+        jnp.zeros((2,), dtype=jnp.float32),
+        EnvConfig(transaction_cost_rate=0.001),
+    )
+
+    assert_allclose(metrics.mean_turnover, jnp.mean(step_results.turnover), rtol=1e-6)
+    assert_allclose(metrics.final_equity, final_state.portfolio_value, rtol=1e-6)
 
 
 def test_dpo_loss_optimizes_log_return_relative_to_spy() -> None:
@@ -325,12 +434,11 @@ def test_dpo_train_step_updates_allocation_head() -> None:
     assert jnp.isfinite(metrics.mean_log_return)
 
 
-def test_train_dpo_uses_chronological_mini_batches() -> None:
+def test_train_dpo_uses_complete_chronological_path() -> None:
     features, returns = _features_returns()
     config = DPOConfig(
         learning_rate=1e-2,
         num_epochs=2,
-        batch_size=2,
         transaction_cost_bps=10.0,
         allocation_hidden_dims=(8,),
     )
@@ -360,7 +468,6 @@ def test_train_dpo_full_batch_matches_one_train_step() -> None:
     config = DPOConfig(
         learning_rate=1e-2,
         num_epochs=1,
-        batch_size=len(features),
         transaction_cost_bps=0.0,
         allocation_hidden_dims=(8,),
     )

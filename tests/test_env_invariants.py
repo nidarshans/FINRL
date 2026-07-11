@@ -45,7 +45,11 @@ def test_hand_computed_weekly_rebalance_cases(case) -> None:
     expected_peak = np.maximum(np.float32(case.starting_peak), expected_value)
     expected_drawdown = np.float32(1.0) - expected_value / expected_peak
     assert_allclose(result.state.drawdown, expected_drawdown, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.state.weights, case.target_weights, rtol=RTOL, atol=ATOL)
+    holding_values = np.asarray(case.target_weights) * (
+        1.0 + np.asarray(case.asset_returns)
+    )
+    expected_weights = holding_values / holding_values.sum()
+    assert_allclose(result.state.weights, expected_weights, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize(
@@ -106,6 +110,6 @@ def test_weekly_rebalance_uses_current_weights_before_rebalance() -> None:
         EnvConfig(transaction_cost_rate=0.001),
     )
 
-    assert_allclose(result.turnover, 0.80, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.transaction_cost, 0.00080, rtol=RTOL, atol=ATOL)
-    assert_allclose(result.net_return, -0.00080, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.turnover, 1.60, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.transaction_cost, 0.00160, rtol=RTOL, atol=ATOL)
+    assert_allclose(result.net_return, -0.00160, rtol=RTOL, atol=ATOL)

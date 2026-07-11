@@ -12,6 +12,7 @@ from finrl.env.accounting import (
     calculate_net_portfolio_return,
     calculate_transaction_cost,
     calculate_turnover,
+    evolve_portfolio_weights,
     keep_top_n_risky_weights,
     normalize_long_only_weights,
     update_portfolio_value,
@@ -29,7 +30,7 @@ def test_calculate_turnover() -> None:
 
     turnover = calculate_turnover(current, target)
 
-    assert_allclose(turnover, 0.3, rtol=RTOL, atol=ATOL)
+    assert_allclose(turnover, 0.6, rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_transaction_cost() -> None:
@@ -81,6 +82,15 @@ def test_calculate_drawdown() -> None:
     )
 
     assert_allclose(drawdown, 0.1, rtol=RTOL, atol=ATOL)
+
+
+def test_evolve_portfolio_weights_tracks_return_drift() -> None:
+    weights = evolve_portfolio_weights(
+        jnp.array([0.5, 0.5, 0.0], dtype=jnp.float32),
+        jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
+    )
+
+    assert_allclose(weights, [2.0 / 3.0, 1.0 / 3.0, 0.0], rtol=RTOL, atol=ATOL)
 
 
 def test_calculate_rewards_without_penalties() -> None:

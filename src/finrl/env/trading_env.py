@@ -13,6 +13,7 @@ from finrl.env.accounting import (
     calculate_net_portfolio_return,
     calculate_transaction_cost,
     calculate_turnover,
+    evolve_portfolio_weights,
     keep_top_n_risky_weights,
     normalize_long_only_weights,
     update_portfolio_value,
@@ -53,6 +54,7 @@ class StepResult(NamedTuple):
     """Diagnostics emitted by one environment step."""
 
     state: EnvState
+    executed_weights: Array
     reward: Array
     gross_return: Array
     net_return: Array
@@ -89,6 +91,11 @@ def environment_step(
     portfolio_value = update_portfolio_value(state.portfolio_value, net_return)
     peak_value = update_running_peak(state.peak_value, portfolio_value)
     drawdown = calculate_drawdown(portfolio_value, peak_value)
+    current_weights = evolve_portfolio_weights(
+        executed_weights,
+        asset_returns,
+        cash_index=config.cash_index,
+    )
     reward_config = RewardConfig(
         drawdown_limit=config.drawdown_limit,
         drawdown_penalty=config.drawdown_penalty,
@@ -107,7 +114,7 @@ def environment_step(
         config=reward_config,
     )
     next_state = EnvState(
-        weights=executed_weights,
+        weights=current_weights,
         portfolio_value=portfolio_value,
         peak_value=peak_value,
         drawdown=drawdown,
@@ -116,6 +123,7 @@ def environment_step(
     )
     return StepResult(
         state=next_state,
+        executed_weights=executed_weights,
         reward=reward,
         gross_return=gross_return,
         net_return=net_return,

@@ -14,6 +14,7 @@ DIRECT_ALLOCATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "klinger_signal_strength",
     "acc_momentum_quality",
     "cmf",
+    "cmf_slope",
     "cmf_cross_signal",
     "cmf_days_since_cross",
 )

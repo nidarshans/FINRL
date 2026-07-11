@@ -67,6 +67,47 @@ def test_yfinance_conversion_returns_polars_ohlcv_dataframe() -> None:
     assert data.to_dicts()[0]["open"] == 100.0
 
 
+def test_yfinance_conversion_zero_fills_dates_without_ohlcv_data() -> None:
+    columns = pd.MultiIndex.from_product(
+        [
+            ["AAA", "LATE"],
+            ["Open", "High", "Low", "Close", "Adj Close", "Volume"],
+        ],
+        names=["Ticker", "Price"],
+    )
+    frame = pd.DataFrame(
+        [
+            [100.0, 101.0, 99.0, 100.5, 100.5, 1_000, *([float("nan")] * 6)],
+            [
+                101.0,
+                102.0,
+                100.0,
+                101.5,
+                101.5,
+                1_100,
+                50.0,
+                51.0,
+                49.0,
+                50.5,
+                50.5,
+                500,
+            ],
+        ],
+        index=pd.to_datetime(["2024-01-05", "2024-01-08"]),
+        columns=columns,
+    )
+    frame.index.name = "Date"
+
+    data = _yfinance_frame_to_polars(frame, ("AAA", "LATE"))
+
+    missing_date = data.filter(
+        (pl.col("ticker") == "LATE") & (pl.col("date") == pl.date(2024, 1, 5))
+    )
+    assert missing_date.select(
+        "open", "high", "low", "close", "adj_close", "volume"
+    ).row(0) == (0.0, 0.0, 0.0, 0.0, 0.0, 0)
+
+
 def test_yfinance_macro_conversion_returns_polars_dataframe() -> None:
     frame = pd.DataFrame(
         {"Close": [20.0]},

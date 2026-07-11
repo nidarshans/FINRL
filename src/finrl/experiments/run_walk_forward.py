@@ -87,8 +87,17 @@ def _returns_for_panel_tickers(frame: pl.DataFrame, panel: AssetFeaturePanel) ->
     return _returns_for_dates(frame, panel.decision_dates, _action_return_columns(panel))
 
 
-def _initial_env_state(n_assets: int) -> EnvState:
-    weights = jnp.ones((n_assets,), dtype=jnp.float32) / n_assets
+def _initial_env_state(
+    n_assets: int,
+    initial_weights: jax.Array | None = None,
+) -> EnvState:
+    weights = (
+        jnp.ones((n_assets,), dtype=jnp.float32) / n_assets
+        if initial_weights is None
+        else jnp.asarray(initial_weights, dtype=jnp.float32)
+    )
+    if weights.shape != (n_assets,):
+        raise ValueError("initial_weights must contain one weight per asset.")
     return EnvState(
         weights=weights,
         portfolio_value=jnp.array(1.0, dtype=jnp.float32),
@@ -152,7 +161,7 @@ def evaluate_dpo_policy(
     )
     actions = predict_weights(policy_state, batch)
     _, step_results = scan_environment(
-        _initial_env_state(test_returns.shape[1]),
+        _initial_env_state(test_returns.shape[1], initial_weights),
         actions,
         jnp.asarray(test_returns, dtype=jnp.float32),
         jnp.asarray(test_spy, dtype=jnp.float32),
@@ -162,7 +171,7 @@ def evaluate_dpo_policy(
         np.asarray(step_results.net_return),
         np.asarray(step_results.turnover),
         np.asarray(step_results.transaction_cost),
-        np.asarray(actions),
+        np.asarray(step_results.executed_weights),
     )
 
 
@@ -283,7 +292,7 @@ def evaluate_test_split(
         portfolio_returns = np.asarray(step_results.net_return)
         turnovers = np.asarray(step_results.turnover)
         costs = np.asarray(step_results.transaction_cost)
-        actions = np.asarray(actions)
+        actions = np.asarray(step_results.executed_weights)
 
     benchmark = run_benchmark_suite(frozen_artifacts.split, test_spy, config)
     metrics = calculate_performance_metrics(

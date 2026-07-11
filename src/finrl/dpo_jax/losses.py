@@ -8,6 +8,11 @@ import jax
 import jax.numpy as jnp
 
 from finrl.dpo_jax.config import DPOConfig
+from finrl.env.accounting import (
+    calculate_transaction_cost,
+    calculate_turnover,
+    evolve_portfolio_weights,
+)
 from finrl.types import Array
 
 
@@ -53,15 +58,22 @@ def dpo_loss(
         weights_t, returns_t = inputs
         stock_weights = weights_t[:-1]
         gross_return = jnp.sum(stock_weights * returns_t)
-        turnover = jnp.sum(jnp.abs(weights_t - prev_weights))
-        transaction_cost = turnover * transaction_cost_rate
+        turnover = calculate_turnover(prev_weights, weights_t)
+        transaction_cost = calculate_transaction_cost(
+            turnover,
+            transaction_cost_rate,
+        )
         net_return = gross_return - transaction_cost
         equity = equity * (1.0 + net_return)
         running_max = jnp.maximum(running_max, equity)
         drawdown = 1.0 - equity / jnp.maximum(running_max, config.eps)
         concentration = jnp.sum(weights_t**2)
+        full_returns = jnp.concatenate(
+            [returns_t, jnp.zeros((1,), dtype=returns_t.dtype)]
+        )
+        current_weights = evolve_portfolio_weights(weights_t, full_returns)
         outputs = (net_return, turnover, drawdown, concentration, equity)
-        return (weights_t, equity, running_max), outputs
+        return (current_weights, equity, running_max), outputs
 
     (_, final_equity, _), outputs = jax.lax.scan(
         step,
@@ -77,10 +89,7 @@ def dpo_loss(
     turnover_loss = jnp.mean(turnovers)
     drawdown_loss = jnp.mean(drawdowns**2)
     concentration_loss = jnp.mean(concentrations)
-    loss = (
-        return_loss
-        + config.lambda_drawdown * drawdown_loss
-    )
+    loss = return_loss + config.lambda_drawdown * drawdown_loss
     metrics = DPOLossMetrics(
         mean_log_return=jnp.mean(log_returns),
         mean_active_log_return=jnp.mean(active_log_returns),

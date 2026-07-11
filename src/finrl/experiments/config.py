@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
+
 from finrl.backtest.walk_forward import WalkForwardConfig
-from finrl.env.trading_env import EnvConfig
 from finrl.dpo_jax.config import DPOConfig
+from finrl.env.trading_env import EnvConfig
 from finrl.features.preprocessing import PreprocessingConfig
 
 
@@ -28,6 +30,20 @@ class ExperimentConfig:
             raise ValueError("rebalance_frequency must be 'daily' or 'weekly'.")
         if self.periods_per_year is not None and self.periods_per_year <= 0:
             raise ValueError("periods_per_year must be positive.")
+        dpo_cost_rate = self.dpo.transaction_cost_bps / 10000.0
+        if self.enable_dpo and not math.isclose(
+            dpo_cost_rate,
+            self.env.transaction_cost_rate,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "DPO and environment transaction cost rates must match."
+            )
+        if self.enable_dpo and self.env.top_n_positions is not None:
+            raise ValueError(
+                "DPO requires top_n_positions=None so training and execution match."
+            )
 
     @property
     def annualization_periods(self) -> int:

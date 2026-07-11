@@ -92,6 +92,32 @@ def test_cmf_cross_signal_and_days_since_cross() -> None:
     ]
 
 
+def test_cmf_slope_is_trailing_and_normalized_per_ticker() -> None:
+    features = compute_asset_features(_asset_ohlcv(), _config()).filter(
+        pl.col("ticker") == "AAA"
+    )
+    expected = features.select(
+        (
+            (pl.col("cmf") - pl.col("cmf").shift(2))
+            / 2.0
+            / (
+                pl.col("cmf")
+                .diff()
+                .rolling_std(window_size=3, min_samples=2)
+                + 1e-9
+            )
+        ).alias("expected")
+    )
+    valid = features.select("cmf_slope").with_columns(expected).drop_nulls()
+
+    assert_allclose(
+        valid.get_column("cmf_slope"),
+        valid.get_column("expected"),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
 def test_mean_reversion_gap_keeps_existing_sign_convention() -> None:
     features = compute_asset_features(_asset_ohlcv(), _config()).filter(
         pl.col("ticker") == "AAA"

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import polars as pl
+import pytest
 from numpy.testing import assert_allclose
 
 from finrl.backtest.walk_forward import WalkForwardConfig, generate_walk_forward_splits
 from finrl.dpo_jax import DPOConfig
+from finrl.env.trading_env import EnvConfig
 from finrl.experiments import (
     ExperimentConfig,
     RawExperimentData,
@@ -105,7 +108,7 @@ def synthetic_experiment_config(
     return ExperimentConfig(
         walk_forward=WalkForwardConfig(train_years=1, test_years=1, step_years=1),
         preprocessing=PreprocessingConfig(rolling_window=2),
-        dpo=DPOConfig(num_epochs=2, learning_rate=1e-3, batch_size=2),
+        dpo=DPOConfig(num_epochs=2, learning_rate=1e-3),
         enable_dpo=enable_dpo,
         seed=7,
         periods_per_year=6,
@@ -119,6 +122,23 @@ def test_experiment_frequency_sets_default_annualization() -> None:
         rebalance_frequency="daily",
         periods_per_year=6,
     ).annualization_periods == 6
+
+
+def test_experiment_requires_matching_dpo_and_environment_costs() -> None:
+    with pytest.raises(ValueError, match="transaction cost rates must match"):
+        ExperimentConfig(
+            dpo=DPOConfig(transaction_cost_bps=5.0),
+            env=EnvConfig(transaction_cost_rate=0.001),
+            enable_dpo=True,
+        )
+
+
+def test_experiment_rejects_top_n_execution_for_dpo() -> None:
+    with pytest.raises(ValueError, match="top_n_positions=None"):
+        ExperimentConfig(
+            env=EnvConfig(top_n_positions=1),
+            enable_dpo=True,
+        )
 
 
 def test_walk_forward_experiment_runs_two_splits_with_spy_benchmark() -> None:
@@ -178,6 +198,19 @@ def test_walk_forward_experiment_is_reproducible_for_fixed_seed() -> None:
     assert first.spy_curve.to_dicts() == second.spy_curve.to_dicts()
 
 
+def test_environment_only_reports_executed_top_n_allocations() -> None:
+    config = replace(
+        synthetic_experiment_config(enable_dpo=False),
+        env=EnvConfig(top_n_positions=1),
+    )
+
+    result = run_walk_forward_experiment(synthetic_experiment_data(), config)
+
+    risky_allocations = result.allocations.select(["AAA", "BBB"]).to_numpy()
+    assert bool((risky_allocations > 0.0).sum(axis=1).max() <= 1)
+    assert_allclose(result.allocations.get_column("CASH").to_numpy(), 0.5, atol=1e-6)
+
+
 def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
     result = run_walk_forward_experiment(
         synthetic_experiment_data(),
@@ -196,3 +229,6 @@ def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
         atol=1e-6,
     )
     assert_allclose(result.allocations.get_column("CASH").to_numpy(), 0.0, atol=0.0)
+    for split_result in result.split_results:
+        first_turnover = split_result.portfolio_returns.get_column("turnover")[0]
+        assert_allclose(first_turnover, 2.0, rtol=1e-6, atol=1e-7)
