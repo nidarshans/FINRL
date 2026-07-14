@@ -40,6 +40,43 @@ def build_performance_figure(result: WalkForwardResult):
     return fig
 
 
+def build_drawdown_figure(result: WalkForwardResult):
+    """Return a Plotly figure comparing portfolio and SPY drawdowns."""
+
+    import plotly.graph_objects as go
+
+    def drawdown(curve: pl.DataFrame) -> pl.Series:
+        equity = curve["equity"]
+        return 1.0 - equity / equity.cum_max()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=result.portfolio_curve["decision_date"],
+            y=drawdown(result.portfolio_curve),
+            mode="lines",
+            name="Portfolio",
+            fill="tozeroy",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=result.spy_curve["decision_date"],
+            y=drawdown(result.spy_curve),
+            mode="lines",
+            name="S&P 500 / SPY",
+        )
+    )
+    fig.update_layout(
+        title="Walk-Forward Drawdown vs S&P 500",
+        xaxis_title="Decision Date",
+        yaxis_title="Drawdown",
+        yaxis_tickformat=".1%",
+        template="plotly_white",
+    )
+    return fig
+
+
 def build_spectral_figure(
     result: WalkForwardResult,
     value_columns: tuple[str, ...] | None = None,
