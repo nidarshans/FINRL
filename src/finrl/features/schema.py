@@ -22,6 +22,9 @@ class FeatureConfig:
     klinger_fast_span: int = 34
     klinger_slow_span: int = 55
     klinger_signal_span: int = 13
+    fip_window: int = 40
+    bollinger_window: int = 20
+    bollinger_std_multiplier: float = 2.0
     spectral_dim: int = 20
 
 

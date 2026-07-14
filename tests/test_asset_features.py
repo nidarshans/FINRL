@@ -96,6 +96,52 @@ def test_cmf_slope_is_trailing_and_normalized_per_ticker() -> None:
     features = compute_asset_features(_asset_ohlcv(), _config()).filter(
         pl.col("ticker") == "AAA"
     )
+
+
+def test_fip_bollinger_bandwidth_and_ratio_match_trailing_definitions() -> None:
+    config = _config()
+    features = compute_asset_features(_asset_ohlcv(), config).filter(
+        pl.col("ticker") == "AAA"
+    )
+    source = _asset_ohlcv().filter(pl.col("ticker") == "AAA").with_columns(
+        pl.col("close").pct_change().alias("return")
+    )
+    expected = source.with_columns(
+        pl.col("return")
+        .sign()
+        .fill_null(0.0)
+        .rolling_sum(window_size=config.fip_window, min_samples=2)
+        .truediv(config.fip_window**0.5)
+        .alias("fip_expected"),
+        pl.col("close")
+        .rolling_mean(window_size=config.bollinger_window, min_samples=2)
+        .alias("middle"),
+        pl.col("close")
+        .rolling_std(window_size=config.bollinger_window, min_samples=2)
+        .alias("std"),
+    ).with_columns(
+        (
+            2.0
+            * config.bollinger_std_multiplier
+            * pl.col("std")
+            / (pl.col("middle").abs() + 1e-9)
+        ).alias("bandwidth_expected")
+    ).with_columns(
+        (
+            pl.col("fip_expected")
+            / (pl.col("bandwidth_expected") + 1e-9)
+        ).alias("ratio_expected")
+    )
+
+    actual = features.select(
+        "frog_in_the_pan", "bollinger_bandwidth", "fip_over_bollinger_bandwidth"
+    )
+    expected = expected.select(
+        "fip_expected", "bandwidth_expected", "ratio_expected"
+    )
+    assert_allclose(
+        actual.to_numpy(), expected.to_numpy(), rtol=RTOL, atol=ATOL, equal_nan=True
+    )
     expected = features.select(
         (
             (pl.col("cmf") - pl.col("cmf").shift(2))

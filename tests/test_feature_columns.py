@@ -26,6 +26,9 @@ def _feature_columns() -> tuple[str, ...]:
         "cmf_slope",
         "cmf_cross_signal",
         "cmf_days_since_cross",
+        "frog_in_the_pan",
+        "bollinger_bandwidth",
+        "fip_over_bollinger_bandwidth",
         "mr_gap_with_rising_ewma",
         "mr_gap_with_falling_ewma",
         "cmf_regime_age",
@@ -48,6 +51,9 @@ def test_direct_allocation_feature_columns_are_explicit() -> None:
         "cmf_slope",
         "cmf_cross_signal",
         "cmf_days_since_cross",
+        "frog_in_the_pan",
+        "bollinger_bandwidth",
+        "fip_over_bollinger_bandwidth",
     )
 
 

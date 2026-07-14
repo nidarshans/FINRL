@@ -67,6 +67,13 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
     features = features.with_columns(
         (pl.col("_cmf_multiplier") * pl.col("volume")).alias("_cmf_volume"),
         pl.col("_return")
+        .sign()
+        .fill_null(0.0)
+        .rolling_sum(window_size=config.fip_window, min_samples=2)
+        .over("ticker")
+        .truediv(config.fip_window**0.5)
+        .alias("frog_in_the_pan"),
+        pl.col("_return")
         .rolling_std(window_size=config.mr_vol_window, min_samples=2)
         .over("ticker")
         .alias("_mr_realized_vol"),
@@ -115,6 +122,14 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         (pl.col("_mr_gap") / (pl.col("_mr_realized_vol") + 1e-9)).alias(
             "mr_ewma50_vol_gap"
         ),
+        pl.col("close")
+        .rolling_mean(window_size=config.bollinger_window, min_samples=2)
+        .over("ticker")
+        .alias("_bollinger_middle"),
+        pl.col("close")
+        .rolling_std(window_size=config.bollinger_window, min_samples=2)
+        .over("ticker")
+        .alias("_bollinger_std"),
         rolling_normalized_slope(
             "_log_ewma50", config.accumulation_window, "ewma50_slope"
         ),
@@ -123,6 +138,19 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .over("ticker")
         .alias("acc_macd_signal"),
         (pl.col("_klinger_fast") - pl.col("_klinger_slow")).alias("_klinger"),
+    )
+    features = features.with_columns(
+        (
+            2.0
+            * config.bollinger_std_multiplier
+            * pl.col("_bollinger_std")
+            / (pl.col("_bollinger_middle").abs() + 1e-9)
+        ).alias("bollinger_bandwidth"),
+    ).with_columns(
+        (
+            pl.col("frog_in_the_pan")
+            / (pl.col("bollinger_bandwidth") + 1e-9)
+        ).alias("fip_over_bollinger_bandwidth"),
     )
     features = features.with_columns(
         pl.col("_klinger")

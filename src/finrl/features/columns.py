@@ -17,6 +17,9 @@ DIRECT_ALLOCATION_FEATURE_COLUMNS: tuple[str, ...] = (
     "cmf_slope",
     "cmf_cross_signal",
     "cmf_days_since_cross",
+    "frog_in_the_pan",
+    "bollinger_bandwidth",
+    "fip_over_bollinger_bandwidth",
 )
 
 
