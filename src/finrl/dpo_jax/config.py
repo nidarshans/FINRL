@@ -13,11 +13,7 @@ class DPOConfig:
     learning_rate: float = 3e-4
     num_epochs: int = 5
 
-    transaction_cost_bps: float = 10.0
-
-    lambda_turnover: float = 0.01
-    lambda_drawdown: float = 0.10
-    lambda_concentration: float = 0.0
+    transaction_cost_bps: float = 0.0
 
     allocation_hidden_dims: tuple[int, ...] = ()
     allocation_hidden_activation: str = "tanh"
@@ -31,9 +27,6 @@ class DPOConfig:
         for name in (
             "learning_rate",
             "transaction_cost_bps",
-            "lambda_turnover",
-            "lambda_drawdown",
-            "lambda_concentration",
             "eps",
         ):
             value = float(getattr(self, name))

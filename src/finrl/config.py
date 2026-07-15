@@ -13,7 +13,7 @@ class ProjectConfig:
     num_stocks: int = 100
     include_cash: bool = True
     rebalance_frequency: Literal["daily", "weekly"] = "weekly"
-    transaction_cost_bps: float = 10.0
+    transaction_cost_bps: float = 0.0
     lookback_days: int = 60
     hmm_states: int = 4
     train_years: int = 10

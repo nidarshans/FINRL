@@ -28,7 +28,7 @@ from finrl.types import Array
 class EnvConfig(NamedTuple):
     """Static environment parameters."""
 
-    transaction_cost_rate: float = 0.001
+    transaction_cost_rate: float = 0.0
     drawdown_limit: float = 0.2
     drawdown_penalty: float = 1.0
     drawdown_penalty_type: int = 0

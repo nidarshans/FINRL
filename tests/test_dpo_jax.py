@@ -151,7 +151,7 @@ def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax()
 
     assert config.allocation_hidden_dims == ()
     assert config.simplex_activation == "softmax"
-    assert config.transaction_cost_bps == 10.0
+    assert config.transaction_cost_bps == 0.0
 
 
 def test_direct_feature_policy_returns_normalized_weights() -> None:
@@ -214,12 +214,7 @@ def test_softmax_allocation_head_has_gradients() -> None:
 
 
 def test_dpo_loss_matches_simple_manual_accounting() -> None:
-    config = DPOConfig(
-        transaction_cost_bps=10.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-        lambda_concentration=0.0,
-    )
+    config = DPOConfig(transaction_cost_bps=10.0)
     weights = jnp.array([[0.5, 0.5], [1.0, 0.0]], dtype=jnp.float32)
     returns = jnp.array([[0.02], [-0.01]], dtype=jnp.float32)
     initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
@@ -237,7 +232,7 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
     expected_equity = jnp.prod(1.0 + expected_net_returns)
     assert_allclose(
         loss,
-        -jnp.mean(jnp.log(1.0 + expected_net_returns + config.eps)),
+        -jnp.mean(expected_net_returns) / (jnp.std(expected_net_returns) + config.eps),
         rtol=1e-6,
     )
     assert_allclose(
@@ -246,62 +241,8 @@ def test_dpo_loss_matches_simple_manual_accounting() -> None:
         rtol=1e-6,
     )
     assert_allclose(metrics.final_equity, expected_equity, rtol=1e-6)
-
-
-def test_dpo_loss_penalizes_turnover_when_configured() -> None:
-    weights = jnp.array([[1.0, 0.0]], dtype=jnp.float32)
-    returns = jnp.array([[0.0]], dtype=jnp.float32)
-    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
-    base = DPOConfig(
-        transaction_cost_bps=0.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-    )
-    penalized = DPOConfig(
-        transaction_cost_bps=0.0,
-        lambda_turnover=100.0,
-        lambda_drawdown=0.0,
-    )
-
-    base_loss, base_metrics = dpo_loss(weights, returns, initial, base)
-    penalized_loss, penalized_metrics = dpo_loss(weights, returns, initial, penalized)
-
-    assert bool(penalized_loss > base_loss)
-    assert_allclose(base_metrics.mean_turnover, 2.0, rtol=1e-6)
-    assert_allclose(penalized_metrics.mean_turnover, 2.0, rtol=1e-6)
-
-
-def test_dpo_loss_penalizes_concentration_when_configured() -> None:
-    weights = jnp.array([[1.0, 0.0], [0.5, 0.5]], dtype=jnp.float32)
-    returns = jnp.zeros((2, 1), dtype=jnp.float32)
-    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
-    base = DPOConfig(
-        transaction_cost_bps=0.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-        lambda_concentration=0.0,
-    )
-    penalized = DPOConfig(
-        transaction_cost_bps=0.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-        lambda_concentration=10.0,
-    )
-
-    base_loss, base_metrics = dpo_loss(weights, returns, initial, base)
-    penalized_loss, penalized_metrics = dpo_loss(weights, returns, initial, penalized)
-
-    assert bool(penalized_loss > base_loss)
-    assert_allclose(
-        penalized_loss - base_loss,
-        10.0 * penalized_metrics.mean_concentration,
-        rtol=1e-6,
-    )
-    assert_allclose(
-        base_metrics.mean_concentration,
-        penalized_metrics.mean_concentration,
-        rtol=1e-6,
-    )
+    assert_allclose(metrics.mean_net_return, jnp.mean(expected_net_returns), rtol=1e-6)
+    assert_allclose(metrics.net_return_volatility, jnp.std(expected_net_returns), rtol=1e-6)
 
 
 def test_dpo_loss_uses_drifted_weights_for_next_turnover() -> None:
@@ -316,7 +257,7 @@ def test_dpo_loss_uses_drifted_weights_for_next_turnover() -> None:
         weights,
         returns,
         initial,
-        DPOConfig(transaction_cost_bps=0.0, lambda_drawdown=0.0),
+        DPOConfig(transaction_cost_bps=0.0),
     )
 
     expected_second_turnover = 1.0 / 3.0
@@ -341,11 +282,7 @@ def test_dpo_loss_matches_environment_accounting_path() -> None:
         axis=1,
     )
     initial = jnp.array([0.0, 0.0, 1.0], dtype=jnp.float32)
-    config = DPOConfig(
-        transaction_cost_bps=10.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-    )
+    config = DPOConfig(transaction_cost_bps=10.0)
 
     _, metrics = dpo_loss(weights, risky_returns, initial, config)
     final_state, step_results = scan_environment(
@@ -367,38 +304,17 @@ def test_dpo_loss_matches_environment_accounting_path() -> None:
     assert_allclose(metrics.final_equity, final_state.portfolio_value, rtol=1e-6)
 
 
-def test_dpo_loss_optimizes_log_return_relative_to_spy() -> None:
-    config = DPOConfig(
-        transaction_cost_bps=0.0,
-        lambda_turnover=0.0,
-        lambda_drawdown=0.0,
-        lambda_concentration=0.0,
-    )
+def test_dpo_loss_optimizes_net_return_sharpe_ratio() -> None:
+    config = DPOConfig(transaction_cost_bps=0.0)
     weights = jnp.array([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.float32)
     returns = jnp.array([[0.03], [-0.01]], dtype=jnp.float32)
-    spy_returns = jnp.array([0.01, 0.02], dtype=jnp.float32)
     initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
 
-    loss, metrics = dpo_loss(
-        weights,
-        returns,
-        initial,
-        config,
-        spy_returns,
-    )
+    loss, metrics = dpo_loss(weights, returns, initial, config)
 
-    portfolio_log_returns = jnp.log1p(returns[:, 0] + config.eps)
-    spy_log_returns = jnp.log1p(spy_returns + config.eps)
-    expected_active = jnp.mean(portfolio_log_returns - spy_log_returns)
-    assert_allclose(loss, -expected_active, rtol=1e-6)
-    assert_allclose(metrics.mean_active_log_return, expected_active, rtol=1e-6)
-
-
-def test_dpo_batch_validates_spy_return_shape() -> None:
-    features, returns = _features_returns()
-
-    with pytest.raises(ValueError, match="spy_returns must have shape"):
-        build_dpo_batch(features, returns, spy_returns=jnp.zeros((4, 1)))
+    expected_sharpe = jnp.mean(returns[:, 0]) / (jnp.std(returns[:, 0]) + config.eps)
+    assert_allclose(loss, -expected_sharpe, rtol=1e-6)
+    assert_allclose(metrics.sharpe_ratio, expected_sharpe, rtol=1e-6)
 
 
 def test_dpo_loss_scalar() -> None:
@@ -410,6 +326,10 @@ def test_dpo_loss_scalar() -> None:
     loss, _metrics = dpo_loss(weights, returns, initial_weights, DPOConfig())
 
     assert loss.shape == ()
+
+
+def test_dpo_config_defaults_to_zero_transaction_cost() -> None:
+    assert DPOConfig().transaction_cost_bps == 0.0
 
 
 def test_unrouted_raw_feature_cannot_change_allocations() -> None:
@@ -464,7 +384,7 @@ def test_dpo_train_step_updates_allocation_head() -> None:
         )
         > 0.0
     )
-    assert jnp.isfinite(metrics.mean_log_return)
+    assert jnp.isfinite(metrics.sharpe_ratio)
 
 
 def test_train_dpo_uses_complete_chronological_path() -> None:
@@ -486,7 +406,7 @@ def test_train_dpo_uses_complete_chronological_path() -> None:
     updated, history = train_dpo(state, build_dpo_batch(features, returns))
 
     assert len(history) == config.num_epochs
-    assert all(jnp.isfinite(metrics.mean_log_return) for metrics in history)
+    assert all(jnp.isfinite(metrics.sharpe_ratio) for metrics in history)
     assert (
         _tree_delta(
             state.policy.params["allocation_head"],

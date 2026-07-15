@@ -33,5 +33,4 @@ def evaluate_dpo(state: DPOTrainState, batch: DPOBatch) -> tuple[Array, DPOLossM
         jnp.asarray(batch.asset_returns, dtype=jnp.float32),
         batch.initial_weights,
         state.config,
-        batch.spy_returns,
     )

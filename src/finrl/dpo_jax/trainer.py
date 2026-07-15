@@ -21,7 +21,6 @@ class DPOBatch(NamedTuple):
 
     asset_features: Array
     asset_returns: Array
-    spy_returns: Array
     previous_weights: Array
     drawdowns: Array
     previous_turnovers: Array
@@ -71,26 +70,18 @@ def build_dpo_batch(
     asset_features: Array,
     asset_returns: Array,
     initial_weights: Array | None = None,
-    spy_returns: Array | None = None,
     tradable_mask: Array | None = None,
 ) -> DPOBatch:
     """Build a cash-initialized batch from decision-date features and returns."""
 
     features = jnp.asarray(asset_features, dtype=jnp.float32)
     returns = jnp.asarray(asset_returns, dtype=jnp.float32)
-    benchmark_returns = (
-        jnp.zeros((returns.shape[0],), dtype=jnp.float32)
-        if spy_returns is None
-        else jnp.asarray(spy_returns, dtype=jnp.float32)
-    )
     if features.ndim != 3:
         raise ValueError("asset_features must have shape [time, asset, feature].")
     if returns.ndim != 2:
         raise ValueError("asset_returns must have shape [time, asset].")
     if features.shape[:2] != returns.shape:
         raise ValueError("Asset feature and return time/asset dimensions must match.")
-    if benchmark_returns.shape != (returns.shape[0],):
-        raise ValueError("spy_returns must have shape [time].")
     n_steps = features.shape[0]
     n_assets = returns.shape[-1]
     if initial_weights is None:
@@ -110,7 +101,6 @@ def build_dpo_batch(
     return DPOBatch(
         asset_features=features,
         asset_returns=returns,
-        spy_returns=benchmark_returns,
         previous_weights=previous_weights,
         drawdowns=jnp.zeros((n_steps, 1), dtype=jnp.float32),
         previous_turnovers=jnp.zeros((n_steps, 1), dtype=jnp.float32),
@@ -138,7 +128,6 @@ def train_step(state: DPOTrainState, batch: DPOBatch) -> tuple[DPOTrainState, DP
             batch.asset_returns,
             batch.initial_weights,
             state.config,
-            batch.spy_returns,
         )
 
     (_loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(
@@ -199,6 +188,5 @@ def _evaluate_metrics(state: DPOTrainState, batch: DPOBatch) -> DPOLossMetrics:
         batch.asset_returns,
         batch.initial_weights,
         state.config,
-        batch.spy_returns,
     )
     return metrics

@@ -144,19 +144,13 @@ The `N + 1` output shape is retained for environment and accounting compatibilit
 The DPO objective is a scan-based differentiable backtest. It accounts for:
 
 * Stock returns
-* SPY benchmark returns
 * Cash weight
 * Turnover from previous weights
 * Transaction costs from configured bps
 * Equity curve updates
-* Running maximum equity
-* Drawdown
-* Concentration diagnostics
 
-Current loss behavior follows the code in `finrl.dpo_jax.losses`: it optimizes
-mean active log return relative to SPY with a drawdown penalty. Turnover and
-concentration are reported as metrics and have configuration fields, but they
-are not currently included in the loss expression.
+The loss is the negative Sharpe ratio of the realized net portfolio returns:
+their mean divided by their population standard deviation plus `eps`.
 
 Experiment configuration can disable DPO to run the deterministic
 environment-only equal-weight path.
@@ -201,7 +195,7 @@ V_(t+1) = V_t * (1 + R_net)
 DD_t = 1 - V_t / V_peak
 ```
 
-Default transaction cost rate is `0.001`, equivalent to 10 bps.
+Default transaction cost rate is `0.0` (zero bps).
 
 Default reward:
 
