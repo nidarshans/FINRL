@@ -6,6 +6,7 @@ import pytest
 
 from finrl.features.columns import (
     DIRECT_ALLOCATION_FEATURE_COLUMNS,
+    feature_set_config,
     selected_direct_allocation_indices,
 )
 
@@ -90,3 +91,57 @@ def test_unrouted_columns_are_excluded() -> None:
     assert "cmf_regime_age" not in selected
     assert "ewma50_slope_up" not in selected
     assert "ewma50_slope_down" not in selected
+
+
+def test_named_momentum_feature_set_has_an_exact_ordered_allowlist() -> None:
+    feature_set = feature_set_config("baseline_plus_momentum")
+
+    assert feature_set.routed_columns[-3:] == (
+        "mom_21d",
+        "mom_126_21d",
+        "near_52w_high",
+    )
+
+
+def test_named_liquidity_feature_set_has_an_exact_ordered_allowlist() -> None:
+    feature_set = feature_set_config("baseline_plus_liquidity")
+
+    assert feature_set.routed_columns[-3:] == (
+        "log_adv_20",
+        "volume_z_20",
+        "amihud_20",
+    )
+
+
+def test_named_structure_feature_set_has_an_exact_ordered_allowlist() -> None:
+    feature_set = feature_set_config("baseline_plus_structure")
+
+    assert feature_set.routed_columns[-5:] == (
+        "confirmed_structure_score",
+        "support_distance_atr",
+        "resistance_distance_atr",
+        "swing_avwap_distance_atr",
+        "bars_since_swing_low",
+    )
+
+
+def test_named_market_relative_feature_set_has_an_exact_ordered_allowlist() -> None:
+    feature_set = feature_set_config("baseline_plus_market_relative")
+
+    assert feature_set.routed_columns[-4:] == (
+        "relative_strength_63",
+        "beta_252",
+        "residual_mom_126_21",
+        "idio_vol_60",
+    )
+
+
+def test_institutional_core_feature_set_contains_risk_features() -> None:
+    feature_set = feature_set_config("institutional_core_v1")
+
+    assert feature_set.routed_columns[-7:-3] == (
+        "natr_20",
+        "realized_vol_20",
+        "downside_vol_60",
+        "max_drawdown_126",
+    )

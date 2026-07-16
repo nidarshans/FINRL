@@ -9,6 +9,7 @@ from typing import Literal
 from finrl.backtest.walk_forward import WalkForwardConfig
 from finrl.dpo_jax.config import DPOConfig
 from finrl.env.trading_env import EnvConfig
+from finrl.features.columns import feature_set_config
 from finrl.features.preprocessing import PreprocessingConfig
 
 
@@ -24,12 +25,14 @@ class ExperimentConfig:
     rebalance_frequency: Literal["daily", "weekly"] = "weekly"
     seed: int = 0
     periods_per_year: int | None = None
+    feature_set: str = "baseline_current_14"
 
     def __post_init__(self) -> None:
         if self.rebalance_frequency not in {"daily", "weekly"}:
             raise ValueError("rebalance_frequency must be 'daily' or 'weekly'.")
         if self.periods_per_year is not None and self.periods_per_year <= 0:
             raise ValueError("periods_per_year must be positive.")
+        feature_set_config(self.feature_set)
         dpo_cost_rate = self.dpo.transaction_cost_bps / 10000.0
         if self.enable_dpo and not math.isclose(
             dpo_cost_rate,

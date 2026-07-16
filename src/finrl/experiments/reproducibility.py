@@ -15,6 +15,7 @@ import polars as pl
 from finrl.backtest.results import WalkForwardResult
 from finrl.experiments.artifacts import RawExperimentData
 from finrl.experiments.config import ExperimentConfig
+from finrl.features.columns import feature_set_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,10 @@ def build_run_metadata(data: RawExperimentData, config: ExperimentConfig) -> Exp
     if not dates:
         raise ValueError("Cannot build metadata for empty decision dates.")
     config_dict = asdict(config)
+    # Persist the resolved ordered columns, not only the feature-set nickname.
+    config_dict["resolved_feature_columns"] = list(
+        feature_set_config(config.feature_set).routed_columns
+    )
     encoded = json.dumps(config_dict, default=_json_default, sort_keys=True)
     fingerprint = input_fingerprint(data)
     run_id = hashlib.sha256(

@@ -84,3 +84,27 @@ def test_build_feature_bundle_aligns_to_friday_decision_dates() -> None:
         date(2024, 1, 5),
         date(2024, 1, 12),
     }
+
+
+def test_build_feature_bundle_routes_ranked_momentum_feature_set() -> None:
+    ohlcv = _pipeline_ohlcv()
+    bundle = MarketDataBundle(
+        ohlcv=ohlcv,
+        spy_ohlcv=pl.DataFrame(),
+        macro=pl.DataFrame(),
+        calendar=pl.DataFrame({"date": ["2024-01-05", "2024-01-12"]}).with_columns(
+            pl.col("date").cast(pl.Date)
+        ),
+    )
+
+    features = build_feature_bundle(
+        bundle, FeatureConfig(feature_set="baseline_plus_momentum_ranked")
+    )
+
+    assert features.asset_feature_columns[-3:] == (
+        "mom_21d_percentile_rank",
+        "mom_126_21d_percentile_rank",
+        "near_52w_high_percentile_rank",
+    )
+    ranks = features.asset_features.get_column("near_52w_high_percentile_rank").to_numpy()
+    assert ((ranks >= 0.0) & (ranks <= 1.0)).all()

@@ -5,12 +5,31 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
 import polars as pl
 
 from finrl.features.schema import FeatureBundle
 from finrl.features.splitsafe import FitWindow, feature_date_range, validate_train_test_order
 
 TableKind = Literal["asset", "macro", "spectral"]
+TransformKind = Literal[
+    "passthrough",
+    "clipped_passthrough",
+    "rolling_zscore",
+    "lagged_rolling_zscore",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureTransformSpec:
+    """Explicit preprocessing contract for one named feature."""
+
+    name: str
+    transform: TransformKind
+    rolling_periods: int | None = None
+    min_periods: int = 2
+    clip_lower: float | None = None
+    clip_upper: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +42,35 @@ class PreprocessingConfig:
     clip_upper: float | None = None
     preserve_rank_columns: bool = True
     fill_null_value: float = 0.0
+    feature_transforms: tuple[FeatureTransformSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate numerical preprocessing controls at configuration time."""
+
+        if self.rolling_window <= 0:
+            raise ValueError("rolling_window must be positive.")
+        if (
+            self.clip_lower is not None
+            and self.clip_upper is not None
+            and self.clip_lower > self.clip_upper
+        ):
+            raise ValueError("clip_lower cannot exceed clip_upper.")
+        if not np.isfinite(self.fill_null_value):
+            raise ValueError("fill_null_value must be finite.")
+        names = tuple(spec.name for spec in self.feature_transforms)
+        if len(names) != len(set(names)):
+            raise ValueError("Feature transform names must be unique.")
+        for spec in self.feature_transforms:
+            if spec.min_periods <= 0:
+                raise ValueError("Feature transform min_periods must be positive.")
+            if spec.rolling_periods is not None and spec.rolling_periods <= 0:
+                raise ValueError("Feature transform rolling_periods must be positive.")
+            if (
+                spec.clip_lower is not None
+                and spec.clip_upper is not None
+                and spec.clip_lower > spec.clip_upper
+            ):
+                raise ValueError("Feature transform clip bounds are invalid.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +81,10 @@ class FittedTablePreprocessor:
     id_columns: tuple[str, ...]
     transformed_columns: tuple[str, ...]
     passthrough_columns: tuple[str, ...]
+    clipped_passthrough_columns: tuple[str, ...]
     group_columns: tuple[str, ...]
     rolling_window: int
+    feature_transforms: tuple[FeatureTransformSpec, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +123,28 @@ def _split_columns(
     table: pl.DataFrame,
     id_columns: tuple[str, ...],
     config: PreprocessingConfig,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     feature_columns = _feature_columns(table, id_columns)
-    if not config.preserve_rank_columns:
-        return feature_columns, ()
-    passthrough = tuple(column for column in feature_columns if _is_rank_column(column))
-    transformed = tuple(column for column in feature_columns if column not in passthrough)
-    return transformed, passthrough
+    specs = {spec.name: spec for spec in config.feature_transforms}
+    passthrough = tuple(
+        column
+        for column in feature_columns
+        if specs.get(column, None) is not None
+        and specs[column].transform == "passthrough"
+        or (config.preserve_rank_columns and _is_rank_column(column))
+    )
+    clipped_passthrough = tuple(
+        column
+        for column in feature_columns
+        if specs.get(column, None) is not None
+        and specs[column].transform == "clipped_passthrough"
+    )
+    transformed = tuple(
+        column
+        for column in feature_columns
+        if column not in passthrough and column not in clipped_passthrough
+    )
+    return transformed, passthrough, clipped_passthrough
 
 
 def _table_preprocessor(
@@ -89,14 +154,20 @@ def _table_preprocessor(
     group_columns: tuple[str, ...],
     config: PreprocessingConfig,
 ) -> FittedTablePreprocessor:
-    transformed_columns, passthrough_columns = _split_columns(table, id_columns, config)
+    transformed_columns, passthrough_columns, clipped_passthrough_columns = _split_columns(
+        table, id_columns, config
+    )
     return FittedTablePreprocessor(
         kind=kind,
         id_columns=id_columns,
         transformed_columns=transformed_columns,
         passthrough_columns=passthrough_columns,
+        clipped_passthrough_columns=clipped_passthrough_columns,
         group_columns=group_columns,
         rolling_window=config.rolling_window,
+        feature_transforms=tuple(
+            spec for spec in config.feature_transforms if spec.name in table.columns
+        ),
     )
 
 
@@ -166,17 +237,23 @@ def _sort_columns(fitted: FittedTablePreprocessor) -> list[str]:
     return ["date"]
 
 
-def _clip_expr(column: str, config: PreprocessingConfig) -> pl.Expr:
+def _spec_for(column: str, fitted: FittedTablePreprocessor) -> FeatureTransformSpec | None:
+    return next((spec for spec in fitted.feature_transforms if spec.name == column), None)
+
+
+def _clip_expr(column: str, config: PreprocessingConfig, spec: FeatureTransformSpec | None = None) -> pl.Expr:
     expr = pl.col(column).cast(pl.Float64)
-    if config.clip_lower is not None:
-        expr = expr.clip(lower_bound=config.clip_lower)
-    if config.clip_upper is not None:
-        expr = expr.clip(upper_bound=config.clip_upper)
+    lower = spec.clip_lower if spec and spec.clip_lower is not None else config.clip_lower
+    upper = spec.clip_upper if spec and spec.clip_upper is not None else config.clip_upper
+    if lower is not None:
+        expr = expr.clip(lower_bound=lower)
+    if upper is not None:
+        expr = expr.clip(upper_bound=upper)
     return expr
 
 
 def _fill_expr(column: str, fitted: FittedTablePreprocessor, config: PreprocessingConfig) -> pl.Expr:
-    expr = _clip_expr(column, config)
+    expr = _clip_expr(column, config, _spec_for(column, fitted))
     expr = pl.when(expr.is_finite()).then(expr).otherwise(None)
     if fitted.group_columns:
         expr = expr.forward_fill().over(fitted.group_columns)
@@ -211,25 +288,40 @@ def _rolling_standardize_table(
     config: PreprocessingConfig,
 ) -> pl.DataFrame:
     sorted_table = table.sort(_sort_columns(fitted))
-    working_columns = [f"__{column}_filled" for column in fitted.transformed_columns]
+    fill_columns = (*fitted.transformed_columns, *fitted.clipped_passthrough_columns)
+    working_columns = [f"__{column}_filled" for column in fill_columns]
     mean_columns = [f"__{column}_mean" for column in fitted.transformed_columns]
     std_columns = [f"__{column}_std" for column in fitted.transformed_columns]
 
     output = sorted_table.with_columns(
         [
             _fill_expr(column, fitted, config).alias(f"__{column}_filled")
-            for column in fitted.transformed_columns
+            for column in fill_columns
         ]
     )
     if config.scale:
         output = output.with_columns(
             [
-                _rolling_mean_expr(f"__{column}_filled", fitted).alias(f"__{column}_mean")
+                (
+                    _rolling_mean_expr(f"__{column}_filled", fitted).shift(1)
+                    if (_spec_for(column, fitted) and _spec_for(column, fitted).transform == "lagged_rolling_zscore")
+                    else _rolling_mean_expr(f"__{column}_filled", fitted)
+                ).alias(f"__{column}_mean")
                 for column in fitted.transformed_columns
             ]
             + [
-                _rolling_std_expr(f"__{column}_filled", fitted).alias(f"__{column}_std")
+                (
+                    _rolling_std_expr(f"__{column}_filled", fitted).shift(1)
+                    if (_spec_for(column, fitted) and _spec_for(column, fitted).transform == "lagged_rolling_zscore")
+                    else _rolling_std_expr(f"__{column}_filled", fitted)
+                ).alias(f"__{column}_std")
                 for column in fitted.transformed_columns
+            ]
+        )
+        output = output.with_columns(
+            [
+                pl.col(f"__{column}_filled").alias(column)
+                for column in fitted.clipped_passthrough_columns
             ]
         )
         output = output.with_columns(
@@ -255,6 +347,7 @@ def _rolling_standardize_table(
     selected_columns = [
         *fitted.id_columns,
         *fitted.transformed_columns,
+        *fitted.clipped_passthrough_columns,
         *fitted.passthrough_columns,
     ]
     if "__split" in output.columns:

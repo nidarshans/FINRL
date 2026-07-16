@@ -9,6 +9,7 @@ import polars as pl
 from numpy.testing import assert_allclose
 
 from finrl.features.preprocessing import (
+    FeatureTransformSpec,
     PreprocessingConfig,
     fit_preprocessors,
     fit_transform_train_transform_test,
@@ -394,4 +395,39 @@ def test_transform_features_applies_rolling_within_supplied_history() -> None:
         [0.0, 0.707107, 0.707107],
         rtol=RTOL,
         atol=ATOL,
+    )
+
+
+def test_explicit_passthrough_and_clipped_passthrough_are_applied() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12"), (1.0, 3.0), (10.0, 12.0), (100.0, 110.0)
+    )
+    config = PreprocessingConfig(
+        rolling_window=2,
+        feature_transforms=(
+            FeatureTransformSpec("return", "passthrough"),
+            FeatureTransformSpec("macro_vix_diff", "clipped_passthrough", clip_upper=11.0),
+        ),
+    )
+    transformed = transform_features(train, fit_preprocessors(train, config))
+
+    assert transformed.asset_features.get_column("return").to_list() == [1.0, 3.0, 11.0, 13.0]
+    assert transformed.macro_features.get_column("macro_vix_diff").to_list() == [10.0, 11.0]
+
+
+def test_lagged_rolling_zscore_excludes_current_observation() -> None:
+    train = _bundle(
+        ("2024-01-05", "2024-01-12", "2024-01-19"),
+        (1.0, 3.0, 5.0), (10.0, 12.0, 14.0), (100.0, 110.0, 120.0)
+    )
+    config = PreprocessingConfig(
+        rolling_window=2,
+        feature_transforms=(FeatureTransformSpec("return", "lagged_rolling_zscore"),),
+    )
+    transformed = transform_features(train, fit_preprocessors(train, config))
+
+    # The first two observations lack two prior values; the third uses [1, 3].
+    assert_allclose(
+        transformed.asset_features.filter(pl.col("ticker") == "AAA").get_column("return").to_list(),
+        [0.0, 0.0, 2.12132], rtol=RTOL, atol=ATOL,
     )

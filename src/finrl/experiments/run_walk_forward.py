@@ -119,7 +119,7 @@ def fit_dpo_train_artifacts(
     """Fit direct portfolio optimization from decision-date asset features."""
 
     routing = feature_routing or selected_direct_allocation_indices(
-        train_features.feature_columns
+        train_features.feature_columns, config.feature_set
     )
     dpo_state = initialize_dpo_train_state(
         jax.random.PRNGKey(config.seed + split_index),
@@ -222,7 +222,7 @@ def fit_train_artifacts(
     dpo_train_metrics = None
     if config.enable_dpo:
         feature_routing = selected_direct_allocation_indices(
-            train_panel.feature_columns
+            train_panel.feature_columns, config.feature_set
         )
         dpo_policy_state, dpo_train_metrics = fit_dpo_train_artifacts(
             train_panel,

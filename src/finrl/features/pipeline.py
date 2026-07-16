@@ -7,7 +7,15 @@ import polars as pl
 from finrl.data.calendar import build_weekly_rebalance_calendar
 from finrl.data.sources import MarketDataBundle
 from finrl.features.asset import compute_asset_features
+from finrl.features.columns import (
+    LIQUIDITY_FEATURE_COLUMNS,
+    MARKET_RELATIVE_FEATURE_COLUMNS,
+    MOMENTUM_FEATURE_COLUMNS,
+    feature_set_config,
+)
 from finrl.features.macro import compute_macro_features
+from finrl.features.market_relative import compute_market_relative_features
+from finrl.features.relative import cross_sectional_percentile_rank
 from finrl.features.schema import FeatureBundle, FeatureConfig
 
 
@@ -50,6 +58,29 @@ def build_feature_bundle(
     """Build aligned Phase 6 features from raw ingested data."""
 
     asset_features = compute_asset_features(raw_data.ohlcv, config)
+    routed_columns = feature_set_config(config.feature_set).routed_columns
+    if any(column in MARKET_RELATIVE_FEATURE_COLUMNS for column in routed_columns):
+        market_relative = compute_market_relative_features(
+            raw_data.ohlcv, raw_data.spy_ohlcv
+        )
+        asset_features = asset_features.join(
+            market_relative, on=["date", "ticker"], how="left"
+        )
+    needs_relative_ranks = any(
+        column.endswith("_percentile_rank")
+        for column in feature_set_config(config.feature_set).routed_columns
+    )
+    if config.add_momentum_percentile_ranks or needs_relative_ranks:
+        for column in (*MOMENTUM_FEATURE_COLUMNS, *LIQUIDITY_FEATURE_COLUMNS):
+            asset_features = cross_sectional_percentile_rank(asset_features, column)
+    missing_columns = tuple(
+        column for column in routed_columns if column not in asset_features.columns
+    )
+    if missing_columns:
+        raise ValueError(
+            "Feature set requires unavailable columns: " + ", ".join(missing_columns)
+        )
+    asset_features = asset_features.select("date", "ticker", *routed_columns)
 
     macro_features = compute_macro_features(raw_data.macro)
     decision_dates = _decision_dates_from_calendar(raw_data.calendar)

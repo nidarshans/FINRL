@@ -6,6 +6,10 @@ import polars as pl
 
 from finrl.data.schema import enforce_ohlcv_schema
 from finrl.features.columns import DIRECT_ALLOCATION_FEATURE_COLUMNS
+from finrl.features.momentum import compute_momentum_features
+from finrl.features.liquidity import compute_liquidity_features
+from finrl.features.structure import compute_structure_features
+from finrl.features.risk import compute_risk_features
 from finrl.features.schema import FeatureConfig
 
 
@@ -211,8 +215,26 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         .otherwise(None)
         .alias("cmf_days_since_cross")
     )
-    return features.select(
-        "date",
-        "ticker",
-        *DIRECT_ALLOCATION_FEATURE_COLUMNS,
+    features = compute_liquidity_features(features, config.liquidity_window)
+    features = compute_risk_features(
+        features,
+        atr_window=config.atr_window,
+        realized_vol_window=config.realized_vol_window,
+        downside_vol_window=config.downside_vol_window,
+        drawdown_window=config.drawdown_window,
+    )
+    features = compute_structure_features(
+        features,
+        atr_window=config.atr_window,
+        swing_left=config.swing_left,
+        swing_right=config.swing_right,
+    )
+    return compute_momentum_features(features).select(
+        "date", "ticker", *DIRECT_ALLOCATION_FEATURE_COLUMNS,
+        "mom_21d", "mom_126_21d", "near_52w_high",
+        "log_adv_20", "volume_z_20", "amihud_20",
+        "confirmed_structure_score", "support_distance_atr",
+        "resistance_distance_atr", "swing_avwap_distance_atr",
+        "bars_since_swing_low",
+        "natr_20", "realized_vol_20", "downside_vol_60", "max_drawdown_126",
     )

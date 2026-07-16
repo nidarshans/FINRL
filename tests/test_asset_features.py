@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import math
 
 import polars as pl
 from numpy.testing import assert_allclose
 
 from finrl.features.asset import compute_asset_features
 from finrl.features.columns import DIRECT_ALLOCATION_FEATURE_COLUMNS
+from finrl.features.liquidity import compute_liquidity_features
+from finrl.features.structure import compute_structure_features
+from finrl.features.market_relative import compute_market_relative_features
+from finrl.features.risk import compute_risk_features
 from finrl.features.schema import FeatureConfig
 
 RTOL = 1e-6
@@ -55,14 +60,164 @@ def _config() -> FeatureConfig:
     )
 
 
-def test_compute_asset_features_returns_only_routed_features() -> None:
+def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
     features = compute_asset_features(_asset_ohlcv(), _config())
 
     assert features.columns == [
         "date",
         "ticker",
         *DIRECT_ALLOCATION_FEATURE_COLUMNS,
+        "mom_21d",
+        "mom_126_21d",
+        "near_52w_high",
+        "log_adv_20",
+        "volume_z_20",
+        "amihud_20",
+        "confirmed_structure_score",
+        "support_distance_atr",
+        "resistance_distance_atr",
+        "swing_avwap_distance_atr",
+        "bars_since_swing_low",
+        "natr_20",
+        "realized_vol_20",
+        "downside_vol_60",
+        "max_drawdown_126",
     ]
+
+
+def test_liquidity_features_match_trailing_dollar_volume_definitions() -> None:
+    data = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 1), date(2024, 1, 2)],
+            "ticker": ["AAA", "AAA"],
+            "close": [10.0, 11.0],
+            "volume": [100.0, 200.0],
+            "_return": [None, 0.1],
+        }
+    )
+    actual = compute_liquidity_features(data, window=2).tail(1).row(named=True)
+
+    assert_allclose(actual["log_adv_20"], math.log(1600.0), rtol=RTOL)
+    assert_allclose(actual["volume_z_20"], 2**-0.5, rtol=RTOL)
+    assert_allclose(actual["amihud_20"], 0.1 / 2200.0, rtol=RTOL)
+
+
+def test_structure_pivots_are_published_only_on_the_confirmation_date() -> None:
+    dates = [date(2024, 1, 1) + timedelta(days=index) for index in range(5)]
+    data = pl.DataFrame(
+        {
+            "date": dates,
+            "ticker": ["AAA"] * 5,
+            "open": [10.0] * 5,
+            "high": [10.0, 11.0, 15.0, 12.0, 10.0],
+            "low": [5.0, 4.0, 4.0, 4.0, 5.0],
+            "close": [8.0, 9.0, 14.0, 11.0, 8.0],
+            "adj_close": [8.0, 9.0, 14.0, 11.0, 8.0],
+            "volume": [100.0] * 5,
+            "_return": [None, 0.1, 0.2, -0.2, -0.1],
+        }
+    )
+    features = compute_structure_features(
+        data, atr_window=2, swing_left=1, swing_right=1
+    )
+
+    assert features.get_column("_confirmed_high").to_list()[2] is None
+    assert features.get_column("_confirmed_high").to_list()[3] == 15.0
+    assert features.get_column("confirmed_structure_score").to_list()[3] == -1.0
+
+
+def test_market_relative_features_require_actual_benchmark_dates() -> None:
+    data = _asset_ohlcv().filter(pl.col("ticker") == "AAA")
+    benchmark = data.with_columns(pl.lit("SPY").alias("ticker"))
+    features = compute_market_relative_features(data, benchmark)
+
+    assert features.get_column("beta_252")[2] is not None
+    missing_date_benchmark = benchmark.filter(pl.col("date") != data.get_column("date")[2])
+    missing = compute_market_relative_features(data, missing_date_benchmark)
+    assert missing.get_column("beta_252")[2] is None
+
+
+def test_risk_features_use_gap_aware_true_range_and_trailing_drawdown() -> None:
+    data = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)],
+            "ticker": ["AAA"] * 3,
+            "open": [10.0, 14.0, 11.0],
+            "high": [11.0, 15.0, 12.0],
+            "low": [9.0, 13.0, 10.0],
+            "close": [10.0, 14.0, 11.0],
+            "adj_close": [10.0, 14.0, 11.0],
+            "volume": [100.0] * 3,
+            "_return": [None, 0.4, 11.0 / 14.0 - 1.0],
+        }
+    )
+    features = compute_risk_features(
+        data, atr_window=2, realized_vol_window=2, downside_vol_window=2,
+        drawdown_window=3,
+    )
+
+    assert_allclose(features.get_column("natr_20")[1], 3.5 / 14.0, rtol=RTOL)
+    assert_allclose(features.get_column("max_drawdown_126")[2], 11.0 / 14.0 - 1.0, rtol=RTOL)
+
+
+def test_momentum_features_use_trailing_horizons_and_per_ticker_highs() -> None:
+    dates = [date(2023, 1, 1) + timedelta(days=index) for index in range(130)]
+    rows = [
+        {
+            "date": day,
+            "ticker": "AAA",
+            "open": 100.0 + index,
+            "high": 101.0 + index,
+            "low": 99.0 + index,
+            "close": 100.0 + index,
+            "adj_close": 100.0 + index,
+            "volume": 100.0,
+        }
+        for index, day in enumerate(dates)
+    ]
+    features = compute_asset_features(pl.DataFrame(rows), _config())
+    final = features.tail(1).row(named=True)
+
+    assert_allclose(final["mom_21d"], 229.0 / 208.0 - 1.0, rtol=RTOL)
+    assert_allclose(final["mom_126_21d"], 208.0 / 103.0 - 1.0, rtol=RTOL)
+    assert_allclose(final["near_52w_high"], 0.0, atol=ATOL)
+
+
+def test_future_price_mutation_cannot_change_prior_momentum_features() -> None:
+    dates = [date(2023, 1, 1) + timedelta(days=index) for index in range(130)]
+    data = pl.DataFrame(
+        [
+            {
+                "date": day,
+                "ticker": "AAA",
+                "open": 100.0 + index,
+                "high": 101.0 + index,
+                "low": 99.0 + index,
+                "close": 100.0 + index,
+                "adj_close": 100.0 + index,
+                "volume": 100.0,
+            }
+            for index, day in enumerate(dates)
+        ]
+    )
+    baseline = compute_asset_features(data, _config())
+    changed = data.with_columns(
+        pl.when(pl.col("date") == dates[-1])
+        .then(pl.col("close") * 2.0)
+        .otherwise(pl.col("close"))
+        .alias("close")
+    )
+    prior = compute_asset_features(changed, _config()).filter(pl.col("date") < dates[-1])
+
+    assert_allclose(
+        baseline.filter(pl.col("date") < dates[-1])
+        .select("mom_21d", "mom_126_21d", "near_52w_high")
+        .to_numpy(),
+        prior.select("mom_21d", "mom_126_21d", "near_52w_high").to_numpy(),
+        rtol=RTOL,
+        atol=ATOL,
+        equal_nan=True,
+    )
 
 
 def test_cmf_cross_signal_and_days_since_cross() -> None:
