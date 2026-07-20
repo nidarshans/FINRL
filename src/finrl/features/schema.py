@@ -30,6 +30,9 @@ class FeatureConfig:
     realized_vol_window: int = 20
     downside_vol_window: int = 60
     drawdown_window: int = 126
+    ema_gap_fast_span: int = 20
+    ema_gap_medium_span: int = 50
+    ema_gap_slow_span: int = 200
     swing_left: int = 3
     swing_right: int = 3
     spectral_dim: int = 20
@@ -58,6 +61,9 @@ class FeatureConfig:
             self.realized_vol_window,
             self.downside_vol_window,
             self.drawdown_window,
+            self.ema_gap_fast_span,
+            self.ema_gap_medium_span,
+            self.ema_gap_slow_span,
             self.swing_left,
             self.swing_right,
             self.spectral_dim,
@@ -66,6 +72,8 @@ class FeatureConfig:
             raise ValueError("Feature windows and dimensions must be positive.")
         if self.bollinger_std_multiplier <= 0.0:
             raise ValueError("bollinger_std_multiplier must be positive.")
+        if not self.ema_gap_fast_span < self.ema_gap_medium_span < self.ema_gap_slow_span:
+            raise ValueError("EMA gap spans must be strictly increasing.")
 
 
 @dataclass(frozen=True, slots=True)

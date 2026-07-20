@@ -60,6 +60,12 @@ RISK_FEATURE_COLUMNS: tuple[str, ...] = (
     "downside_vol_60",
     "max_drawdown_126",
 )
+VOLUME_EMA_FEATURE_COLUMNS: tuple[str, ...] = (
+    "volume_z_20",
+    "close_ema20_gap",
+    "close_ema50_gap",
+    "close_ema200_gap",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +103,9 @@ FEATURE_SETS: dict[str, FeatureSetConfig] = {
     ),
     "baseline_plus_risk": FeatureSetConfig(
         "baseline_plus_risk", BASELINE_CURRENT_14 + RISK_FEATURE_COLUMNS
+    ),
+    "baseline_plus_volume_ema": FeatureSetConfig(
+        "baseline_plus_volume_ema", BASELINE_CURRENT_14 + VOLUME_EMA_FEATURE_COLUMNS
     ),
     "institutional_core_v1": FeatureSetConfig(
         "institutional_core_v1",

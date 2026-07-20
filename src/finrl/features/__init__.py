@@ -16,6 +16,7 @@ from finrl.features.liquidity import compute_liquidity_features
 from finrl.features.structure import compute_structure_features
 from finrl.features.market_relative import compute_market_relative_features
 from finrl.features.risk import compute_risk_features
+from finrl.features.trend import compute_ema_gap_features
 from finrl.features.panels import AssetFeaturePanel, build_asset_feature_panel
 from finrl.features.pipeline import build_feature_bundle
 from finrl.features.preprocessing import (
@@ -52,6 +53,7 @@ __all__ = [
     "compute_structure_features",
     "compute_market_relative_features",
     "compute_risk_features",
+    "compute_ema_gap_features",
     "feature_set_config",
     "cross_sectional_percentile_rank",
     "fit_preprocessors",

@@ -14,6 +14,7 @@ from finrl.features.liquidity import compute_liquidity_features
 from finrl.features.structure import compute_structure_features
 from finrl.features.market_relative import compute_market_relative_features
 from finrl.features.risk import compute_risk_features
+from finrl.features.trend import compute_ema_gap_features
 from finrl.features.schema import FeatureConfig
 
 RTOL = 1e-6
@@ -82,6 +83,9 @@ def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
         "realized_vol_20",
         "downside_vol_60",
         "max_drawdown_126",
+        "close_ema20_gap",
+        "close_ema50_gap",
+        "close_ema200_gap",
     ]
 
 
@@ -158,6 +162,20 @@ def test_risk_features_use_gap_aware_true_range_and_trailing_drawdown() -> None:
 
     assert_allclose(features.get_column("natr_20")[1], 3.5 / 14.0, rtol=RTOL)
     assert_allclose(features.get_column("max_drawdown_126")[2], 11.0 / 14.0 - 1.0, rtol=RTOL)
+
+
+def test_ema_gap_features_are_dimensionless_and_trailing() -> None:
+    data = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 1) + timedelta(days=index) for index in range(3)],
+            "ticker": ["AAA"] * 3,
+            "close": [10.0, 12.0, 14.0],
+        }
+    )
+    features = compute_ema_gap_features(data, fast_span=2, medium_span=3, slow_span=4)
+
+    assert_allclose(features.get_column("close_ema20_gap")[0], 0.0, atol=ATOL)
+    assert features.get_column("close_ema20_gap")[2] > 0.0
 
 
 def test_momentum_features_use_trailing_horizons_and_per_ticker_highs() -> None:

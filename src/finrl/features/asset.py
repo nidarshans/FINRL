@@ -10,6 +10,7 @@ from finrl.features.momentum import compute_momentum_features
 from finrl.features.liquidity import compute_liquidity_features
 from finrl.features.structure import compute_structure_features
 from finrl.features.risk import compute_risk_features
+from finrl.features.trend import compute_ema_gap_features
 from finrl.features.schema import FeatureConfig
 
 
@@ -223,6 +224,12 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         downside_vol_window=config.downside_vol_window,
         drawdown_window=config.drawdown_window,
     )
+    features = compute_ema_gap_features(
+        features,
+        fast_span=config.ema_gap_fast_span,
+        medium_span=config.ema_gap_medium_span,
+        slow_span=config.ema_gap_slow_span,
+    )
     features = compute_structure_features(
         features,
         atr_window=config.atr_window,
@@ -237,4 +244,5 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         "resistance_distance_atr", "swing_avwap_distance_atr",
         "bars_since_swing_low",
         "natr_20", "realized_vol_20", "downside_vol_60", "max_drawdown_126",
+        "close_ema20_gap", "close_ema50_gap", "close_ema200_gap",
     )
