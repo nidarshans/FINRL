@@ -228,6 +228,7 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         features,
         fast_span=config.ema_gap_fast_span,
         medium_span=config.ema_gap_medium_span,
+        long_span=config.ema_gap_long_span,
         slow_span=config.ema_gap_slow_span,
     )
     features = compute_structure_features(
@@ -245,4 +246,5 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         "bars_since_swing_low",
         "natr_20", "realized_vol_20", "downside_vol_60", "max_drawdown_126",
         "close_ema20_gap", "close_ema50_gap", "close_ema200_gap",
+        "ema20_ema50_distance", "ema50_ema100_distance", "ema20_ema100_distance",
     )

@@ -86,6 +86,9 @@ def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
         "close_ema20_gap",
         "close_ema50_gap",
         "close_ema200_gap",
+        "ema20_ema50_distance",
+        "ema50_ema100_distance",
+        "ema20_ema100_distance",
     ]
 
 
@@ -172,10 +175,13 @@ def test_ema_gap_features_are_dimensionless_and_trailing() -> None:
             "close": [10.0, 12.0, 14.0],
         }
     )
-    features = compute_ema_gap_features(data, fast_span=2, medium_span=3, slow_span=4)
+    features = compute_ema_gap_features(
+        data, fast_span=2, medium_span=3, long_span=4, slow_span=5
+    )
 
     assert_allclose(features.get_column("close_ema20_gap")[0], 0.0, atol=ATOL)
     assert features.get_column("close_ema20_gap")[2] > 0.0
+    assert features.get_column("ema20_ema50_distance")[2] > 0.0
 
 
 def test_momentum_features_use_trailing_horizons_and_per_ticker_highs() -> None:

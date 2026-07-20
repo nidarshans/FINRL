@@ -65,6 +65,9 @@ VOLUME_EMA_FEATURE_COLUMNS: tuple[str, ...] = (
     "close_ema20_gap",
     "close_ema50_gap",
     "close_ema200_gap",
+    "ema20_ema50_distance",
+    "ema50_ema100_distance",
+    "ema20_ema100_distance",
 )
 
 
