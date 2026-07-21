@@ -14,6 +14,8 @@ class DPOConfig:
     num_epochs: int = 5
 
     transaction_cost_bps: float = 0.0
+    drawdown_limit: float = 0.2
+    drawdown_penalty: float = 1.0
 
     allocation_hidden_dims: tuple[int, ...] = ()
     allocation_hidden_activation: str = "tanh"
@@ -27,6 +29,8 @@ class DPOConfig:
         for name in (
             "learning_rate",
             "transaction_cost_bps",
+            "drawdown_limit",
+            "drawdown_penalty",
             "eps",
         ):
             value = float(getattr(self, name))
@@ -34,6 +38,8 @@ class DPOConfig:
                 raise ValueError(f"{name} must be finite and non-negative.")
         if self.learning_rate == 0.0 or self.eps == 0.0:
             raise ValueError("learning_rate and eps must be positive.")
+        if self.drawdown_limit >= 1.0:
+            raise ValueError("drawdown_limit must be less than 1.0.")
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)
         _validate_activation("allocation_hidden_activation", self.allocation_hidden_activation)
         _validate_activation(

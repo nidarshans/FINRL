@@ -150,12 +150,34 @@ def test_institutional_core_feature_set_contains_risk_features() -> None:
 def test_volume_ema_feature_set_has_explicit_order() -> None:
     feature_set = feature_set_config("baseline_plus_volume_ema")
 
-    assert feature_set.routed_columns[-7:] == (
+    assert feature_set.routed_columns[-8:] == (
         "volume_z_20",
+        "close_vwap20_gap",
         "close_ema20_gap",
         "close_ema50_gap",
         "close_ema200_gap",
         "ema20_ema50_distance",
-        "ema50_ema100_distance",
-        "ema20_ema100_distance",
+        "ema50_ema200_distance",
+        "ema20_ema200_distance",
+    )
+
+
+def test_volume_ema_volatility_feature_set_has_only_requested_features() -> None:
+    feature_set = feature_set_config("baseline_plus_volume_ema_volatility")
+
+    assert feature_set.routed_columns == (
+        "cmf",
+        "cmf_slope",
+        "volume_z_20",
+        "close_vwap20_gap",
+        "close_ema20_gap",
+        "close_ema50_gap",
+        "close_ema200_gap",
+        "ema20_ema50_distance",
+        "ema50_ema200_distance",
+        "ema20_ema200_distance",
+        "ema20_slope",
+        "ema50_slope",
+        "ema200_slope",
+        "realized_vol_126",
     )

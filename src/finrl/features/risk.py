@@ -10,12 +10,19 @@ def compute_risk_features(
     *,
     atr_window: int,
     realized_vol_window: int,
+    historical_vol_window: int,
     downside_vol_window: int,
     drawdown_window: int,
 ) -> pl.DataFrame:
     """Add trailing, dimensionless risk features independently per ticker."""
 
-    if min(atr_window, realized_vol_window, downside_vol_window, drawdown_window) <= 0:
+    if min(
+        atr_window,
+        realized_vol_window,
+        historical_vol_window,
+        downside_vol_window,
+        drawdown_window,
+    ) <= 0:
         raise ValueError("Risk windows must be positive.")
     previous_close = pl.col("close").shift(1).over("ticker")
     output = data.with_columns(
@@ -35,6 +42,15 @@ def compute_risk_features(
             pl.col("_return").rolling_std(realized_vol_window, min_samples=2).over("ticker")
             * (252.0**0.5)
         ).alias("realized_vol_20"),
+        (
+            pl.col("_return")
+            .rolling_std(
+                historical_vol_window,
+                min_samples=historical_vol_window,
+            )
+            .over("ticker")
+            * (252.0**0.5)
+        ).alias("realized_vol_126"),
         (
             pl.col("_downside_return")
             .pow(2)

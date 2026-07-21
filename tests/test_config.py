@@ -43,3 +43,5 @@ def test_feature_config_default_trailing_windows() -> None:
     assert config.macd_slow_span == 26
     assert config.macd_signal_span == 9
     assert config.mr_vol_window == 50
+    assert config.historical_vol_window == 126
+    assert config.ema_slope_window == 10

@@ -22,6 +22,7 @@ class DPOLossMetrics(NamedTuple):
     mean_net_return: Array
     net_return_volatility: Array
     sharpe_ratio: Array
+    mean_drawdown_excess: Array
     mean_turnover: Array
     final_equity: Array
 
@@ -32,7 +33,7 @@ def dpo_loss(
     initial_weights: Array,
     config: DPOConfig,
 ) -> tuple[Array, DPOLossMetrics]:
-    """Compute the negative net-return Sharpe ratio over a backtest path.
+    """Compute negative Sharpe plus excess-drawdown loss over a backtest path.
 
     ``weights`` has shape ``[T, N + 1]`` and includes cash in the final column.
     ``asset_returns`` has shape ``[T, N]`` and excludes cash.
@@ -72,11 +73,19 @@ def dpo_loss(
     mean_net_return = jnp.mean(net_returns)
     net_return_volatility = jnp.std(net_returns)
     sharpe_ratio = mean_net_return / (net_return_volatility + config.eps)
-    loss = -sharpe_ratio
+    equity_path = jnp.concatenate(
+        [jnp.ones((1,), dtype=equities.dtype), equities]
+    )
+    running_peaks = jax.lax.associative_scan(jnp.maximum, equity_path)
+    drawdowns = 1.0 - equity_path[1:] / (running_peaks[1:] + config.eps)
+    drawdown_excess = jnp.maximum(drawdowns - config.drawdown_limit, 0.0)
+    mean_drawdown_excess = jnp.mean(drawdown_excess)
+    loss = -sharpe_ratio + config.drawdown_penalty * mean_drawdown_excess
     metrics = DPOLossMetrics(
         mean_net_return=mean_net_return,
         net_return_volatility=net_return_volatility,
         sharpe_ratio=sharpe_ratio,
+        mean_drawdown_excess=mean_drawdown_excess,
         mean_turnover=jnp.mean(turnovers),
         final_equity=jnp.where(
             equities.shape[0] > 0,

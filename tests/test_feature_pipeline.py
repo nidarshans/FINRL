@@ -108,3 +108,36 @@ def test_build_feature_bundle_routes_ranked_momentum_feature_set() -> None:
     )
     ranks = features.asset_features.get_column("near_52w_high_percentile_rank").to_numpy()
     assert ((ranks >= 0.0) & (ranks <= 1.0)).all()
+
+
+def test_build_feature_bundle_routes_volume_ema_historical_volatility_set() -> None:
+    bundle = MarketDataBundle(
+        ohlcv=_pipeline_ohlcv(),
+        spy_ohlcv=pl.DataFrame(),
+        macro=pl.DataFrame(),
+        calendar=pl.DataFrame({"date": ["2024-01-05", "2024-01-12"]}).with_columns(
+            pl.col("date").cast(pl.Date)
+        ),
+    )
+
+    features = build_feature_bundle(
+        bundle,
+        FeatureConfig(feature_set="baseline_plus_volume_ema_volatility"),
+    )
+
+    assert features.asset_feature_columns == (
+        "cmf",
+        "cmf_slope",
+        "volume_z_20",
+        "close_vwap20_gap",
+        "close_ema20_gap",
+        "close_ema50_gap",
+        "close_ema200_gap",
+        "ema20_ema50_distance",
+        "ema50_ema200_distance",
+        "ema20_ema200_distance",
+        "ema20_slope",
+        "ema50_slope",
+        "ema200_slope",
+        "realized_vol_126",
+    )

@@ -144,6 +144,10 @@ def test_dpo_config_validates_hidden_dims() -> None:
         DPOConfig(allocation_hidden_activation="swish")
     with pytest.raises(ValueError, match="must be 'identity'"):
         DPOConfig(allocation_output_activation="sigmoid")
+    with pytest.raises(ValueError, match="drawdown_penalty"):
+        DPOConfig(drawdown_penalty=-1.0)
+    with pytest.raises(ValueError, match="drawdown_limit"):
+        DPOConfig(drawdown_limit=1.0)
 
 
 def test_dpo_config_allows_no_allocation_hidden_layers_and_defaults_to_softmax() -> None:
@@ -315,6 +319,33 @@ def test_dpo_loss_optimizes_net_return_sharpe_ratio() -> None:
     expected_sharpe = jnp.mean(returns[:, 0]) / (jnp.std(returns[:, 0]) + config.eps)
     assert_allclose(loss, -expected_sharpe, rtol=1e-6)
     assert_allclose(metrics.sharpe_ratio, expected_sharpe, rtol=1e-6)
+
+
+def test_dpo_loss_adds_mean_drawdown_excess_above_limit() -> None:
+    weights = jnp.array(
+        [[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    returns = jnp.array([[-0.10], [0.0], [0.0]], dtype=jnp.float32)
+    initial = jnp.array([0.0, 1.0], dtype=jnp.float32)
+    unpenalized_config = DPOConfig(
+        drawdown_limit=0.05,
+        drawdown_penalty=0.0,
+    )
+    penalized_config = DPOConfig(
+        drawdown_limit=0.05,
+        drawdown_penalty=2.0,
+    )
+
+    unpenalized_loss, _ = dpo_loss(
+        weights, returns, initial, unpenalized_config
+    )
+    penalized_loss, metrics = dpo_loss(
+        weights, returns, initial, penalized_config
+    )
+
+    assert_allclose(metrics.mean_drawdown_excess, 0.05, atol=1e-6)
+    assert_allclose(penalized_loss - unpenalized_loss, 0.10, atol=1e-6)
 
 
 def test_dpo_loss_scalar() -> None:

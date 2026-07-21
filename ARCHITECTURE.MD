@@ -140,6 +140,9 @@ softmax, each stock is processed independently by the same shared allocation
 function; no stock-specific parameters or cross-asset mixing are used. Cash is
 excluded from the projection and its appended portfolio weight is always zero.
 The `N + 1` output shape is retained for environment and accounting compatibility.
+Training uses the dense simplex allocation. Evaluation may optionally keep and
+renormalize only the largest configured number of risky positions through the
+trading environment; this top-N projection does not alter the training loss.
 
 The DPO objective is a scan-based differentiable backtest. It accounts for:
 
@@ -149,8 +152,10 @@ The DPO objective is a scan-based differentiable backtest. It accounts for:
 * Transaction costs from configured bps
 * Equity curve updates
 
-The loss is the negative Sharpe ratio of the realized net portfolio returns:
-their mean divided by their population standard deviation plus `eps`.
+The loss is the negative Sharpe ratio of the realized net portfolio returns
+plus a weighted mean excess-drawdown penalty. Drawdown is calculated causally
+from the running equity peak, and only the portion above the configured
+drawdown limit contributes to the penalty.
 
 Experiment configuration can disable DPO to run the deterministic
 environment-only equal-weight path.

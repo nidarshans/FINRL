@@ -221,6 +221,7 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         features,
         atr_window=config.atr_window,
         realized_vol_window=config.realized_vol_window,
+        historical_vol_window=config.historical_vol_window,
         downside_vol_window=config.downside_vol_window,
         drawdown_window=config.drawdown_window,
     )
@@ -228,8 +229,8 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         features,
         fast_span=config.ema_gap_fast_span,
         medium_span=config.ema_gap_medium_span,
-        long_span=config.ema_gap_long_span,
         slow_span=config.ema_gap_slow_span,
+        slope_window=config.ema_slope_window,
     )
     features = compute_structure_features(
         features,
@@ -240,11 +241,13 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
     return compute_momentum_features(features).select(
         "date", "ticker", *DIRECT_ALLOCATION_FEATURE_COLUMNS,
         "mom_21d", "mom_126_21d", "near_52w_high",
-        "log_adv_20", "volume_z_20", "amihud_20",
+        "log_adv_20", "volume_z_20", "close_vwap20_gap", "amihud_20",
         "confirmed_structure_score", "support_distance_atr",
         "resistance_distance_atr", "swing_avwap_distance_atr",
         "bars_since_swing_low",
-        "natr_20", "realized_vol_20", "downside_vol_60", "max_drawdown_126",
+        "natr_20", "realized_vol_20", "realized_vol_126", "downside_vol_60",
+        "max_drawdown_126",
         "close_ema20_gap", "close_ema50_gap", "close_ema200_gap",
-        "ema20_ema50_distance", "ema50_ema100_distance", "ema20_ema100_distance",
+        "ema20_ema50_distance", "ema50_ema200_distance", "ema20_ema200_distance",
+        "ema20_slope", "ema50_slope", "ema200_slope",
     )

@@ -62,12 +62,25 @@ RISK_FEATURE_COLUMNS: tuple[str, ...] = (
 )
 VOLUME_EMA_FEATURE_COLUMNS: tuple[str, ...] = (
     "volume_z_20",
+    "close_vwap20_gap",
     "close_ema20_gap",
     "close_ema50_gap",
     "close_ema200_gap",
     "ema20_ema50_distance",
-    "ema50_ema100_distance",
-    "ema20_ema100_distance",
+    "ema50_ema200_distance",
+    "ema20_ema200_distance",
+)
+EMA_SLOPE_FEATURE_COLUMNS: tuple[str, ...] = (
+    "ema20_slope",
+    "ema50_slope",
+    "ema200_slope",
+)
+VOLATILITY_FEATURE_COLUMNS: tuple[str, ...] = (
+    "realized_vol_126",
+)
+CMF_FEATURE_COLUMNS: tuple[str, ...] = (
+    "cmf",
+    "cmf_slope",
 )
 
 
@@ -109,6 +122,13 @@ FEATURE_SETS: dict[str, FeatureSetConfig] = {
     ),
     "baseline_plus_volume_ema": FeatureSetConfig(
         "baseline_plus_volume_ema", BASELINE_CURRENT_14 + VOLUME_EMA_FEATURE_COLUMNS
+    ),
+    "baseline_plus_volume_ema_volatility": FeatureSetConfig(
+        "baseline_plus_volume_ema_volatility",
+        CMF_FEATURE_COLUMNS
+        + VOLUME_EMA_FEATURE_COLUMNS
+        + EMA_SLOPE_FEATURE_COLUMNS
+        + VOLATILITY_FEATURE_COLUMNS,
     ),
     "institutional_core_v1": FeatureSetConfig(
         "institutional_core_v1",

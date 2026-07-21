@@ -133,12 +133,13 @@ def test_experiment_requires_matching_dpo_and_environment_costs() -> None:
         )
 
 
-def test_experiment_rejects_top_n_execution_for_dpo() -> None:
-    with pytest.raises(ValueError, match="top_n_positions=None"):
-        ExperimentConfig(
-            env=EnvConfig(top_n_positions=1),
-            enable_dpo=True,
-        )
+def test_experiment_allows_eval_only_top_n_execution_for_dpo() -> None:
+    config = ExperimentConfig(
+        env=EnvConfig(top_n_positions=1),
+        enable_dpo=True,
+    )
+
+    assert config.env.top_n_positions == 1
 
 
 def test_experiment_rejects_position_cap_execution_for_dpo() -> None:
@@ -241,3 +242,16 @@ def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
     second_turnover = result.split_results[1].portfolio_returns.get_column("turnover")[0]
     assert_allclose(first_turnover, 2.0, rtol=1e-6, atol=1e-7)
     assert second_turnover < 2.0
+
+
+def test_dpo_evaluation_reports_only_top_n_executed_positions() -> None:
+    base_config = synthetic_experiment_config(enable_dpo=True)
+    config = replace(
+        base_config,
+        env=EnvConfig(top_n_positions=1),
+    )
+
+    result = run_walk_forward_experiment(synthetic_experiment_data(), config)
+
+    risky_allocations = result.allocations.select(["AAA", "BBB"]).to_numpy()
+    assert bool((risky_allocations > 0.0).sum(axis=1).max() <= 1)

@@ -73,6 +73,7 @@ def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
         "near_52w_high",
         "log_adv_20",
         "volume_z_20",
+        "close_vwap20_gap",
         "amihud_20",
         "confirmed_structure_score",
         "support_distance_atr",
@@ -81,14 +82,18 @@ def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
         "bars_since_swing_low",
         "natr_20",
         "realized_vol_20",
+        "realized_vol_126",
         "downside_vol_60",
         "max_drawdown_126",
         "close_ema20_gap",
         "close_ema50_gap",
         "close_ema200_gap",
         "ema20_ema50_distance",
-        "ema50_ema100_distance",
-        "ema20_ema100_distance",
+        "ema50_ema200_distance",
+        "ema20_ema200_distance",
+        "ema20_slope",
+        "ema50_slope",
+        "ema200_slope",
     ]
 
 
@@ -97,6 +102,8 @@ def test_liquidity_features_match_trailing_dollar_volume_definitions() -> None:
         {
             "date": [date(2024, 1, 1), date(2024, 1, 2)],
             "ticker": ["AAA", "AAA"],
+            "high": [11.0, 13.0],
+            "low": [9.0, 10.0],
             "close": [10.0, 11.0],
             "volume": [100.0, 200.0],
             "_return": [None, 0.1],
@@ -106,6 +113,8 @@ def test_liquidity_features_match_trailing_dollar_volume_definitions() -> None:
 
     assert_allclose(actual["log_adv_20"], math.log(1600.0), rtol=RTOL)
     assert_allclose(actual["volume_z_20"], 2**-0.5, rtol=RTOL)
+    expected_vwap = (10.0 * 100.0 + (34.0 / 3.0) * 200.0) / 300.0
+    assert_allclose(actual["close_vwap20_gap"], 11.0 - expected_vwap, rtol=RTOL)
     assert_allclose(actual["amihud_20"], 0.1 / 2200.0, rtol=RTOL)
 
 
@@ -159,15 +168,42 @@ def test_risk_features_use_gap_aware_true_range_and_trailing_drawdown() -> None:
         }
     )
     features = compute_risk_features(
-        data, atr_window=2, realized_vol_window=2, downside_vol_window=2,
-        drawdown_window=3,
+        data, atr_window=2, realized_vol_window=2, historical_vol_window=126,
+        downside_vol_window=2, drawdown_window=3,
     )
 
     assert_allclose(features.get_column("natr_20")[1], 3.5 / 14.0, rtol=RTOL)
     assert_allclose(features.get_column("max_drawdown_126")[2], 11.0 / 14.0 - 1.0, rtol=RTOL)
 
 
-def test_ema_gap_features_are_dimensionless_and_trailing() -> None:
+def test_historical_volatility_uses_126_trading_day_window() -> None:
+    row_count = 127
+    data = pl.DataFrame(
+        {
+            "date": [date(2024, 1, 1) + timedelta(days=index) for index in range(row_count)],
+            "ticker": ["AAA"] * row_count,
+            "high": [101.0] * row_count,
+            "low": [99.0] * row_count,
+            "close": [100.0] * row_count,
+            "_return": [None, *([0.0] * 125), 1.0],
+        }
+    )
+
+    features = compute_risk_features(
+        data,
+        atr_window=20,
+        realized_vol_window=20,
+        historical_vol_window=126,
+        downside_vol_window=60,
+        drawdown_window=126,
+    )
+
+    historical_volatility = features.get_column("realized_vol_126")
+    assert historical_volatility[-2] is None
+    assert_allclose(historical_volatility[-1], math.sqrt(2.0))
+
+
+def test_ema_price_gaps_and_slopes_are_trailing() -> None:
     data = pl.DataFrame(
         {
             "date": [date(2024, 1, 1) + timedelta(days=index) for index in range(3)],
@@ -176,12 +212,24 @@ def test_ema_gap_features_are_dimensionless_and_trailing() -> None:
         }
     )
     features = compute_ema_gap_features(
-        data, fast_span=2, medium_span=3, long_span=4, slow_span=5
+        data, fast_span=2, medium_span=3, slow_span=5, slope_window=2
     )
 
+    assert features.get_column("ema20_slope")[0] is None
     assert_allclose(features.get_column("close_ema20_gap")[0], 0.0, atol=ATOL)
+    assert_allclose(
+        features.get_column("close_ema20_gap")[2],
+        features.get_column("close")[2] - features.get_column("_ema20")[2],
+        rtol=RTOL,
+    )
     assert features.get_column("close_ema20_gap")[2] > 0.0
     assert features.get_column("ema20_ema50_distance")[2] > 0.0
+    assert features.get_column("ema20_ema200_distance")[2] > 0.0
+    assert_allclose(
+        features.get_column("ema20_slope")[2],
+        (features.get_column("_ema20")[2] - features.get_column("_ema20")[0]) / 2.0,
+        rtol=RTOL,
+    )
 
 
 def test_momentum_features_use_trailing_horizons_and_per_ticker_highs() -> None:

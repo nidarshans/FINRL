@@ -16,10 +16,33 @@ def compute_liquidity_features(data: pl.DataFrame, window: int) -> pl.DataFrame:
         raise ValueError("Liquidity window must be positive.")
     output = data.with_columns(
         (pl.col("close") * pl.col("volume")).alias("_dollar_volume"),
+        (
+            (pl.col("high") + pl.col("low") + pl.col("close"))
+            / 3.0
+            * pl.col("volume")
+        ).alias("_typical_price_volume"),
         pl.when(pl.col("close") * pl.col("volume") > 0.0)
         .then(pl.col("_return").abs() / (pl.col("close") * pl.col("volume")))
         .otherwise(None)
         .alias("_amihud_daily"),
+    )
+    output = output.with_columns(
+        pl.when(
+            pl.col("volume")
+            .rolling_sum(window_size=window, min_samples=window)
+            .over("ticker")
+            > 0.0
+        )
+        .then(
+            pl.col("_typical_price_volume")
+            .rolling_sum(window_size=window, min_samples=window)
+            .over("ticker")
+            / pl.col("volume")
+            .rolling_sum(window_size=window, min_samples=window)
+            .over("ticker")
+        )
+        .otherwise(None)
+        .alias("_vwap20")
     )
     return output.with_columns(
         pl.when(
@@ -50,6 +73,7 @@ def compute_liquidity_features(data: pl.DataFrame, window: int) -> pl.DataFrame:
                 + 1e-9
             )
         ).alias("volume_z_20"),
+        (pl.col("close") - pl.col("_vwap20")).alias("close_vwap20_gap"),
         pl.col("_amihud_daily")
         .rolling_mean(window_size=window, min_samples=1)
         .over("ticker")
