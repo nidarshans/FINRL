@@ -17,6 +17,7 @@ dependencies = [
     "plotly>=5.0",
     "polars>=1.0",
     "scipy>=1.10",
+    "scikit-learn>=1.4",
     "setuptools<81",
     "yfinance>=0.2",
 ]

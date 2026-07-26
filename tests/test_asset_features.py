@@ -67,6 +67,7 @@ def test_compute_asset_features_returns_routed_and_candidate_features() -> None:
     assert features.columns == [
         "date",
         "ticker",
+        "close",
         *DIRECT_ALLOCATION_FEATURE_COLUMNS,
         "mom_21d",
         "mom_126_21d",

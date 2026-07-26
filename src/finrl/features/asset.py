@@ -239,7 +239,7 @@ def compute_asset_features(data: pl.DataFrame, config: FeatureConfig) -> pl.Data
         swing_right=config.swing_right,
     )
     return compute_momentum_features(features).select(
-        "date", "ticker", *DIRECT_ALLOCATION_FEATURE_COLUMNS,
+        "date", "ticker", "close", *DIRECT_ALLOCATION_FEATURE_COLUMNS,
         "mom_21d", "mom_126_21d", "near_52w_high",
         "log_adv_20", "volume_z_20", "close_vwap20_gap", "amihud_20",
         "confirmed_structure_score", "support_distance_atr",

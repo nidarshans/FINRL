@@ -83,6 +83,21 @@ CMF_FEATURE_COLUMNS: tuple[str, ...] = (
     "cmf_slope",
 )
 
+# 3M routes every explicitly named asset feature declared in this module.
+# ``dict.fromkeys`` preserves group order while removing intentional overlaps.
+THREE_M_FEATURE_COLUMNS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *DIRECT_ALLOCATION_FEATURE_COLUMNS,
+            *MOMENTUM_FEATURE_COLUMNS,
+            *VOLUME_EMA_FEATURE_COLUMNS,
+            *EMA_SLOPE_FEATURE_COLUMNS,
+            *VOLATILITY_FEATURE_COLUMNS,
+            *CMF_FEATURE_COLUMNS,
+        )
+    )
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FeatureSetConfig:
@@ -145,6 +160,7 @@ FEATURE_SETS: dict[str, FeatureSetConfig] = {
         + LIQUIDITY_FEATURE_COLUMNS
         + STRUCTURE_FEATURE_COLUMNS,
     ),
+    "three_m_all_v1": FeatureSetConfig("three_m_all_v1", THREE_M_FEATURE_COLUMNS),
 }
 
 

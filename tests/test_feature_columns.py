@@ -6,6 +6,7 @@ import pytest
 
 from finrl.features.columns import (
     DIRECT_ALLOCATION_FEATURE_COLUMNS,
+    THREE_M_FEATURE_COLUMNS,
     feature_set_config,
     selected_direct_allocation_indices,
 )
@@ -181,3 +182,13 @@ def test_volume_ema_volatility_feature_set_has_only_requested_features() -> None
         "ema200_slope",
         "realized_vol_126",
     )
+
+
+def test_three_m_feature_set_routes_every_declared_feature_once() -> None:
+    feature_set = feature_set_config("three_m_all_v1")
+
+    assert feature_set.routed_columns == THREE_M_FEATURE_COLUMNS
+    assert len(THREE_M_FEATURE_COLUMNS) == 50
+    assert len(THREE_M_FEATURE_COLUMNS) == len(set(THREE_M_FEATURE_COLUMNS))
+    assert "beta_252" in THREE_M_FEATURE_COLUMNS
+    assert "amihud_20_percentile_rank" in THREE_M_FEATURE_COLUMNS

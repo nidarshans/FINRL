@@ -80,7 +80,12 @@ def build_feature_bundle(
         raise ValueError(
             "Feature set requires unavailable columns: " + ", ".join(missing_columns)
         )
-    asset_features = asset_features.select("date", "ticker", *routed_columns)
+    # 3M uses close only for causal event-label construction.  It remains an
+    # auxiliary column and is excluded by the exact 3M model feature router.
+    auxiliary_columns = ("close",) if config.feature_set == "three_m_all_v1" else ()
+    asset_features = asset_features.select(
+        "date", "ticker", *auxiliary_columns, *routed_columns
+    )
 
     macro_features = compute_macro_features(raw_data.macro)
     decision_dates = _decision_dates_from_calendar(raw_data.calendar)
