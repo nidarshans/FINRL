@@ -15,6 +15,7 @@ from finrl.dpo_jax.trainer import (
     DPOTrainState,
     build_dpo_batch,
     initialize_dpo_train_state,
+    initialize_shrink_perturb_dpo_train_state,
     train_dpo,
     train_step,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "dpo_loss",
     "evaluate_dpo",
     "initialize_dpo_train_state",
+    "initialize_shrink_perturb_dpo_train_state",
     "predict_weights",
     "sparsemax",
     "train_dpo",

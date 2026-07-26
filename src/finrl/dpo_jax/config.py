@@ -12,6 +12,8 @@ class DPOConfig:
 
     learning_rate: float = 3e-4
     num_epochs: int = 5
+    shrink_perturb_shrink_factor: float = 0.4
+    shrink_perturb_perturb_scale: float = 0.1
 
     transaction_cost_bps: float = 0.0
     drawdown_limit: float = 0.2
@@ -38,6 +40,13 @@ class DPOConfig:
                 raise ValueError(f"{name} must be finite and non-negative.")
         if self.learning_rate == 0.0 or self.eps == 0.0:
             raise ValueError("learning_rate and eps must be positive.")
+        if not 0.0 <= self.shrink_perturb_shrink_factor <= 1.0:
+            raise ValueError("shrink_perturb_shrink_factor must be in [0, 1].")
+        if (
+            not math.isfinite(self.shrink_perturb_perturb_scale)
+            or self.shrink_perturb_perturb_scale < 0.0
+        ):
+            raise ValueError("shrink_perturb_perturb_scale must be finite and non-negative.")
         if self.drawdown_limit >= 1.0:
             raise ValueError("drawdown_limit must be less than 1.0.")
         _validate_hidden_dims("allocation_hidden_dims", self.allocation_hidden_dims, allow_empty=True)

@@ -224,9 +224,10 @@ Required benchmark strategies:
 
 Default walk-forward setup:
 
-* 10-year train window
+* DPO: 10-year initial train window followed by expanding cumulative train windows
 * 1-year test window
-* Annual rolling retraining
+* DPO: annual full-window retraining with shrink-and-perturb initialization and a fresh optimizer state
+* Non-DPO paths may use rolling train windows
 
 Evaluation uses train-fitted preprocessing and train-fitted policy parameters.
 No model updates occur during evaluation.

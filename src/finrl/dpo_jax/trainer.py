@@ -66,6 +66,47 @@ def initialize_dpo_train_state(
     )
 
 
+def initialize_shrink_perturb_dpo_train_state(
+    rng: Array,
+    config: DPOConfig,
+    n_assets: int,
+    asset_feature_dim: int,
+    direct_feature_indices: tuple[int, ...],
+    previous_state: DPOTrainState,
+) -> DPOTrainState:
+    """Create a fresh-optimizer state with shrink-and-perturb parameters.
+
+    The prior parameters are shrunk and mixed with a fresh initialization.  The
+    optimizer state is deliberately not reused: each expanding-window fit is a
+    new optimization run, initialized from the perturbed prior policy.
+    """
+
+    if previous_state.config != config:
+        raise ValueError("Previous DPO state configuration does not match the current configuration.")
+    if previous_state.direct_feature_indices != direct_feature_indices:
+        raise ValueError("Previous DPO state direct feature routing does not match.")
+
+    fresh_state = initialize_dpo_train_state(
+        rng,
+        config,
+        n_assets,
+        asset_feature_dim,
+        direct_feature_indices,
+    )
+    try:
+        params = jax.tree.map(
+            lambda previous, fresh: (
+                config.shrink_perturb_shrink_factor * previous
+                + config.shrink_perturb_perturb_scale * fresh
+            ),
+            previous_state.policy.params,
+            fresh_state.policy.params,
+        )
+    except ValueError as error:
+        raise ValueError("Previous DPO state parameter structure does not match.") from error
+    return fresh_state.replace(policy=fresh_state.policy.replace(params=params))
+
+
 def build_dpo_batch(
     asset_features: Array,
     asset_returns: Array,

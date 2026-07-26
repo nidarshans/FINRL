@@ -18,6 +18,7 @@ class WalkForwardConfig:
     train_years: int = 10
     test_years: int = 1
     step_years: int = 1
+    expanding_train_window: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +122,12 @@ def generate_walk_forward_splits(
     dates: Iterable[date | str] | pl.Series | pl.DataFrame,
     config: WalkForwardConfig,
 ) -> tuple[WalkForwardSplit, ...]:
-    """Generate annual rolling train/test splits from decision dates or calendar."""
+    """Generate annual rolling or expanding train/test splits.
+
+    In expanding mode, the first train date remains fixed while the train end
+    advances with each test period.  This supports DPO's cumulative retraining
+    schedule without changing the default rolling behavior used elsewhere.
+    """
 
     if config.train_years <= 0 or config.test_years <= 0 or config.step_years <= 0:
         raise ValueError("train_years, test_years, and step_years must be positive.")
@@ -132,9 +138,14 @@ def generate_walk_forward_splits(
     first_year = calendar.select(pl.min("decision_date")).item().year
     last_year = calendar.select(pl.max("decision_date")).item().year
     splits: list[WalkForwardSplit] = []
-    train_start_year = first_year
+    split_index = 0
     while True:
-        train_end_year = train_start_year + config.train_years - 1
+        train_start_year = (
+            first_year
+            if config.expanding_train_window
+            else first_year + split_index * config.step_years
+        )
+        train_end_year = first_year + config.train_years - 1 + split_index * config.step_years
         test_start_year = train_end_year + 1
         test_end_year = test_start_year + config.test_years - 1
         if test_end_year > last_year:
@@ -169,7 +180,7 @@ def generate_walk_forward_splits(
             )
             validate_split_boundaries(split)
             splits.append(split)
-        train_start_year += config.step_years
+        split_index += 1
     return tuple(splits)
 
 

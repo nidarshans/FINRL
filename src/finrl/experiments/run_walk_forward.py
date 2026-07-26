@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import NamedTuple
 
 import jax
@@ -27,6 +28,7 @@ from finrl.dpo_jax import (
     predict_weights,
     train_dpo,
     initialize_dpo_train_state,
+    initialize_shrink_perturb_dpo_train_state,
 )
 from finrl.dpo_jax.losses import DPOLossMetrics
 from finrl.env.trading_env import EnvState, scan_environment
@@ -115,18 +117,27 @@ def fit_dpo_train_artifacts(
     config: ExperimentConfig,
     split_index: int = 0,
     feature_routing: DirectAllocationRoutingMetadata | None = None,
+    previous_dpo_state: DPOTrainState | None = None,
 ) -> tuple[DPOTrainState, tuple[DPOLossMetrics, ...]]:
-    """Fit direct portfolio optimization from decision-date asset features."""
+    """Fit DPO from full cumulative features using shrink-and-perturb if available."""
 
     routing = feature_routing or selected_direct_allocation_indices(
         train_features.feature_columns, config.feature_set
     )
-    dpo_state = initialize_dpo_train_state(
+    state_args = (
         jax.random.PRNGKey(config.seed + split_index),
         config.dpo,
         train_features.values.shape[1],
         train_features.values.shape[2],
         routing.direct_allocation_indices,
+    )
+    dpo_state = (
+        initialize_dpo_train_state(*state_args)
+        if previous_dpo_state is None
+        else initialize_shrink_perturb_dpo_train_state(
+            *state_args,
+            previous_state=previous_dpo_state,
+        )
     )
     initial_weights = jnp.zeros((train_returns.shape[1],), dtype=jnp.float32).at[-1].set(1.0)
     batch = build_dpo_batch(
@@ -209,6 +220,7 @@ def fit_train_artifacts(
     config: ExperimentConfig,
     split_index: int = 0,
     spy_returns: pl.DataFrame | None = None,
+    previous_dpo_state: DPOTrainState | None = None,
 ) -> ExperimentArtifacts:
     """Fit preprocessing and optional direct-allocation DPO on train only."""
 
@@ -230,6 +242,7 @@ def fit_train_artifacts(
             config,
             split_index,
             feature_routing,
+            previous_dpo_state,
         )
     return ExperimentArtifacts(
         split=split,
@@ -369,6 +382,7 @@ def run_split(
     config: ExperimentConfig,
     split_index: int = 0,
     initial_state: EnvState | None = None,
+    previous_dpo_state: DPOTrainState | None = None,
 ) -> SplitRunResult:
     """Fit train artifacts and evaluate one frozen test split."""
 
@@ -379,6 +393,7 @@ def run_split(
         config,
         split_index,
         spy_returns=raw_data.spy_returns,
+        previous_dpo_state=previous_dpo_state,
     )
     result, final_state = evaluate_test_split(
         split,
@@ -445,12 +460,19 @@ def run_walk_forward_experiment(
 ) -> WalkForwardResult:
     """Run all strict walk-forward splits for prepared data."""
 
-    splits = generate_walk_forward_splits(raw_data.features.decision_dates, config.walk_forward)
+    walk_forward_config = (
+        replace(config.walk_forward, expanding_train_window=True)
+        if config.enable_dpo
+        else config.walk_forward
+    )
+    splits = generate_walk_forward_splits(raw_data.features.decision_dates, walk_forward_config)
     split_runs = []
     state = None
+    dpo_state = None
     for split_index, split in enumerate(splits):
-        split_run = run_split(split, raw_data, config, split_index, state)
+        split_run = run_split(split, raw_data, config, split_index, state, dpo_state)
         split_runs.append(split_run)
         state = split_run.final_state
+        dpo_state = split_run.artifacts.dpo_policy_state
     split_results = tuple(split_run.result for split_run in split_runs)
     return aggregate_walk_forward_results(split_results, config)

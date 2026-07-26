@@ -15,6 +15,7 @@ from finrl.dpo_jax import (
     dpo_loss,
     evaluate_dpo,
     initialize_dpo_train_state,
+    initialize_shrink_perturb_dpo_train_state,
     predict_weights,
     sparsemax,
     train_dpo,
@@ -416,6 +417,48 @@ def test_dpo_train_step_updates_allocation_head() -> None:
         > 0.0
     )
     assert jnp.isfinite(metrics.sharpe_ratio)
+
+
+def test_shrink_perturb_mixes_prior_and_fresh_parameters_with_fresh_optimizer() -> None:
+    config = DPOConfig(
+        shrink_perturb_shrink_factor=0.4,
+        shrink_perturb_perturb_scale=0.1,
+        allocation_hidden_dims=(8,),
+    )
+    previous = initialize_dpo_train_state(
+        jax.random.PRNGKey(0), config, 2, 5, direct_feature_indices=(0, 2, 4)
+    )
+    fresh = initialize_dpo_train_state(
+        jax.random.PRNGKey(1), config, 2, 5, direct_feature_indices=(0, 2, 4)
+    )
+
+    actual = initialize_shrink_perturb_dpo_train_state(
+        jax.random.PRNGKey(1),
+        config,
+        2,
+        5,
+        direct_feature_indices=(0, 2, 4),
+        previous_state=previous,
+    )
+
+    for previous_leaf, fresh_leaf, actual_leaf in zip(
+        jax.tree.leaves(previous.policy.params),
+        jax.tree.leaves(fresh.policy.params),
+        jax.tree.leaves(actual.policy.params),
+        strict=True,
+    ):
+        assert_allclose(
+            actual_leaf,
+            0.4 * previous_leaf + 0.1 * fresh_leaf,
+            rtol=1e-6,
+            atol=1e-7,
+        )
+    for fresh_leaf, actual_leaf in zip(
+        jax.tree.leaves(fresh.policy.opt_state),
+        jax.tree.leaves(actual.policy.opt_state),
+        strict=True,
+    ):
+        assert_allclose(actual_leaf, fresh_leaf, rtol=0.0, atol=0.0)
 
 
 def test_train_dpo_uses_complete_chronological_path() -> None:

@@ -81,6 +81,28 @@ def test_generate_walk_forward_splits_matches_documented_examples() -> None:
     )
 
 
+def test_generate_expanding_walk_forward_splits_keeps_initial_train_start() -> None:
+    splits = generate_walk_forward_splits(
+        _annual_calendar(2010, 2023),
+        WalkForwardConfig(
+            train_years=10,
+            test_years=1,
+            step_years=1,
+            expanding_train_window=True,
+        ),
+    )
+
+    assert len(splits) == 4
+    assert (splits[0].train_start, splits[0].train_end) == (
+        date(2010, 1, 1),
+        date(2019, 12, 31),
+    )
+    assert (splits[1].train_start, splits[1].train_end) == (
+        date(2010, 1, 1),
+        date(2020, 12, 31),
+    )
+
+
 def test_split_carries_decision_and_execution_dates() -> None:
     split = generate_walk_forward_splits(
         _annual_calendar(2010, 2020),

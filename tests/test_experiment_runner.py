@@ -242,6 +242,9 @@ def test_walk_forward_experiment_runs_with_direct_allocation_policy() -> None:
     second_turnover = result.split_results[1].portfolio_returns.get_column("turnover")[0]
     assert_allclose(first_turnover, 2.0, rtol=1e-6, atol=1e-7)
     assert second_turnover < 2.0
+    assert result.split_results[0].train_start == date(2020, 1, 1)
+    assert result.split_results[1].train_start == date(2020, 1, 1)
+    assert result.split_results[1].train_end == date(2021, 12, 31)
 
 
 def test_dpo_evaluation_reports_only_top_n_executed_positions() -> None:
