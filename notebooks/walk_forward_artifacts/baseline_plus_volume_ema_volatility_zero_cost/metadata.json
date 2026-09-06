@@ -1,0 +1,158 @@
+{
+  "config": {
+    "dpo": {
+      "allocation_hidden_activation": "tanh",
+      "allocation_hidden_dims": [
+        32,
+        16,
+        8
+      ],
+      "allocation_output_activation": "identity",
+      "allocation_use_layer_norm": true,
+      "drawdown_limit": 0.05,
+      "drawdown_penalty": 1,
+      "eps": 1e-08,
+      "learning_rate": 0.0001,
+      "num_epochs": 20,
+      "shrink_perturb_perturb_scale": 0.5,
+      "shrink_perturb_shrink_factor": 0.1,
+      "simplex_activation": "sparsemax",
+      "transaction_cost_bps": 0.0
+    },
+    "enable_dpo": true,
+    "env": [
+      0.0,
+      0.05,
+      1,
+      0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -1,
+      null,
+      null,
+      null,
+      0.0,
+      0.0
+    ],
+    "feature_set": "baseline_plus_volume_ema_volatility",
+    "periods_per_year": null,
+    "preprocessing": {
+      "clip_lower": null,
+      "clip_upper": null,
+      "feature_transforms": [
+        {
+          "clip_lower": -10.0,
+          "clip_upper": 10.0,
+          "min_periods": 2,
+          "name": "mr_ewma50_vol_gap",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": -10.0,
+          "clip_upper": 10.0,
+          "min_periods": 2,
+          "name": "ewma50_slope",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": -1.0,
+          "clip_upper": 1.0,
+          "min_periods": 2,
+          "name": "cmf",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": null,
+          "clip_upper": null,
+          "min_periods": 2,
+          "name": "cmf_cross_signal",
+          "rolling_periods": null,
+          "transform": "passthrough"
+        },
+        {
+          "clip_lower": 0.0,
+          "clip_upper": 252.0,
+          "min_periods": 2,
+          "name": "cmf_days_since_cross",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": null,
+          "clip_upper": null,
+          "min_periods": 2,
+          "name": "volume_z_20",
+          "rolling_periods": 252,
+          "transform": "lagged_rolling_zscore"
+        }
+      ],
+      "fill_null_value": 0.0,
+      "preserve_rank_columns": true,
+      "rolling_window": 252,
+      "scale": true
+    },
+    "rebalance_frequency": "daily",
+    "resolved_feature_columns": [
+      "cmf",
+      "cmf_slope",
+      "volume_z_20",
+      "close_vwap20_gap",
+      "close_ema20_gap",
+      "close_ema50_gap",
+      "close_ema200_gap",
+      "ema20_ema50_distance",
+      "ema50_ema200_distance",
+      "ema20_ema200_distance",
+      "ema20_slope",
+      "ema50_slope",
+      "ema200_slope",
+      "realized_vol_126"
+    ],
+    "seed": 9,
+    "walk_forward": {
+      "expanding_train_window": true,
+      "step_years": 1,
+      "test_years": 1,
+      "train_years": 3
+    }
+  },
+  "created_at_utc": "2026-07-26T17:34:31Z",
+  "decision_end": "2026-07-22",
+  "decision_start": "2000-01-03",
+  "git_revision": "5cbb146503d42706961f9b24dd7c211ecd7e8e5c",
+  "input_fingerprint": "6edc07b81823950264a84b4945df787523a3cacccedc8b19e12715ab096440eb",
+  "run_id": "50535015936c31d2",
+  "seed": 9,
+  "tickers": [
+    "AMD",
+    "B",
+    "BIL",
+    "COIN",
+    "CRWD",
+    "F",
+    "GLD",
+    "GME",
+    "GOOG",
+    "HOOD",
+    "HWM",
+    "IEF",
+    "JNJ",
+    "KO",
+    "LLY",
+    "LMT",
+    "MCD",
+    "MU",
+    "NET",
+    "NFLX",
+    "NVDA",
+    "PANW",
+    "QCOM",
+    "ZS"
+  ]
+}

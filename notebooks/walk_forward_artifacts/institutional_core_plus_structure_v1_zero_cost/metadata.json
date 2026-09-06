@@ -1,0 +1,158 @@
+{
+  "config": {
+    "dpo": {
+      "allocation_hidden_activation": "tanh",
+      "allocation_hidden_dims": [
+        32,
+        16,
+        8
+      ],
+      "allocation_output_activation": "identity",
+      "allocation_use_layer_norm": true,
+      "eps": 1e-08,
+      "learning_rate": 0.0001,
+      "num_epochs": 50,
+      "simplex_activation": "sparsemax",
+      "transaction_cost_bps": 0.0
+    },
+    "enable_dpo": true,
+    "env": [
+      0.0,
+      0.2,
+      1.0,
+      0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -1,
+      null,
+      null,
+      null,
+      0.0,
+      0.0
+    ],
+    "feature_set": "institutional_core_plus_structure_v1",
+    "periods_per_year": null,
+    "preprocessing": {
+      "clip_lower": null,
+      "clip_upper": null,
+      "feature_transforms": [
+        {
+          "clip_lower": -10.0,
+          "clip_upper": 10.0,
+          "min_periods": 2,
+          "name": "mr_ewma50_vol_gap",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": -10.0,
+          "clip_upper": 10.0,
+          "min_periods": 2,
+          "name": "ewma50_slope",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": -1.0,
+          "clip_upper": 1.0,
+          "min_periods": 2,
+          "name": "cmf",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": null,
+          "clip_upper": null,
+          "min_periods": 2,
+          "name": "cmf_cross_signal",
+          "rolling_periods": null,
+          "transform": "passthrough"
+        },
+        {
+          "clip_lower": 0.0,
+          "clip_upper": 252.0,
+          "min_periods": 2,
+          "name": "cmf_days_since_cross",
+          "rolling_periods": null,
+          "transform": "clipped_passthrough"
+        },
+        {
+          "clip_lower": null,
+          "clip_upper": null,
+          "min_periods": 2,
+          "name": "volume_z_20",
+          "rolling_periods": 252,
+          "transform": "lagged_rolling_zscore"
+        }
+      ],
+      "fill_null_value": 0.0,
+      "preserve_rank_columns": true,
+      "rolling_window": 252,
+      "scale": true
+    },
+    "rebalance_frequency": "daily",
+    "resolved_feature_columns": [
+      "mr_ewma50_vol_gap",
+      "ewma50_slope",
+      "acc_macd_signal",
+      "acc_klinger_signal",
+      "macd_signal_strength",
+      "klinger_signal_strength",
+      "acc_momentum_quality",
+      "cmf",
+      "cmf_slope",
+      "cmf_cross_signal",
+      "cmf_days_since_cross",
+      "frog_in_the_pan",
+      "bollinger_bandwidth",
+      "fip_over_bollinger_bandwidth",
+      "mom_21d",
+      "mom_126_21d",
+      "near_52w_high",
+      "natr_20",
+      "realized_vol_20",
+      "downside_vol_60",
+      "max_drawdown_126",
+      "log_adv_20",
+      "volume_z_20",
+      "amihud_20",
+      "confirmed_structure_score",
+      "support_distance_atr",
+      "resistance_distance_atr",
+      "swing_avwap_distance_atr",
+      "bars_since_swing_low"
+    ],
+    "seed": 32,
+    "walk_forward": {
+      "step_years": 1,
+      "test_years": 1,
+      "train_years": 3
+    }
+  },
+  "created_at_utc": "2026-07-17T00:55:52Z",
+  "decision_end": "2026-07-14",
+  "decision_start": "2015-01-02",
+  "git_revision": "481ca9a9500a6861839d860184c93d59f4736b7b",
+  "input_fingerprint": "de7a58b0f4f8770262c08f1967e3438f5e40095e9a0cdaa2166aac2e3ea86225",
+  "run_id": "2c92e09706475f3b",
+  "seed": 32,
+  "tickers": [
+    "GLD",
+    "HL",
+    "IBB",
+    "XLB",
+    "XLC",
+    "XLE",
+    "XLF",
+    "XLI",
+    "XLK",
+    "XLP",
+    "XLRE",
+    "XLU",
+    "XLV",
+    "XLY"
+  ]
+}

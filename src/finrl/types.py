@@ -12,7 +12,4 @@ try:
 except ImportError:  # pragma: no cover - package dependency should provide JAX.
     Array: TypeAlias = Any
 
-DateLike: TypeAlias = str
-Ticker: TypeAlias = str
 PathLikeStr: TypeAlias = str | PathLike[str]
-Scalar: TypeAlias = float

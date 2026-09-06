@@ -25,20 +25,3 @@ def cross_sectional_percentile_rank(
         .otherwise((pl.col(value_col).rank(method="average").over("date") - 1.0) / (count_by_date - 1.0))
         .alias(output_col)
     )
-
-
-def add_asset_relative_features(features: pl.DataFrame) -> pl.DataFrame:
-    """Add per-date percentile ranks for selected asset features."""
-
-    ranked = cross_sectional_percentile_rank(
-        features, "return", "return_percentile_rank"
-    )
-    ranked = cross_sectional_percentile_rank(
-        ranked, "dollar_volume", "dollar_volume_percentile_rank"
-    )
-    amihud_column = (
-        "liq_amihud_illiquidity"
-        if "liq_amihud_illiquidity" in ranked.columns
-        else "amihud_illiquidity"
-    )
-    return cross_sectional_percentile_rank(ranked, amihud_column, "amihud_percentile_rank")

@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 from numpy.testing import assert_allclose
 
-from finrl.backtest.walk_forward import WalkForwardConfig, generate_walk_forward_splits
+from finrl.backtest.walk_forward import WalkForwardConfig
 from finrl.dpo_jax import DPOConfig
 from finrl.env.trading_env import EnvConfig
 from finrl.experiments import (

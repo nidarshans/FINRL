@@ -167,9 +167,6 @@ def evaluate_dpo_policy(
     batch = DPOBatch(
         asset_features=jnp.asarray(test_features.values, dtype=jnp.float32),
         asset_returns=jnp.asarray(test_returns[:, :-1], dtype=jnp.float32),
-        previous_weights=jnp.repeat(initial_weights[None, :], test_returns.shape[0], axis=0),
-        drawdowns=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
-        previous_turnovers=jnp.zeros((test_returns.shape[0], 1), dtype=jnp.float32),
         initial_weights=initial_weights,
         tradable_mask=(
             None

@@ -21,9 +21,6 @@ class DPOBatch(NamedTuple):
 
     asset_features: Array
     asset_returns: Array
-    previous_weights: Array
-    drawdowns: Array
-    previous_turnovers: Array
     initial_weights: Array
     tradable_mask: Array | None = None
 
@@ -138,13 +135,9 @@ def build_dpo_batch(
     )
     if mask.shape != (n_steps, n_assets):
         raise ValueError("tradable_mask must have shape [time, assets].")
-    previous_weights = jnp.broadcast_to(initial, (n_steps, n_assets + 1))
     return DPOBatch(
         asset_features=features,
         asset_returns=returns,
-        previous_weights=previous_weights,
-        drawdowns=jnp.zeros((n_steps, 1), dtype=jnp.float32),
-        previous_turnovers=jnp.zeros((n_steps, 1), dtype=jnp.float32),
         initial_weights=initial,
         tradable_mask=mask,
     )

@@ -1,0 +1,93 @@
+{
+  "config": {
+    "dpo": {
+      "allocation_hidden_activation": "tanh",
+      "allocation_hidden_dims": [
+        16,
+        8
+      ],
+      "allocation_output_activation": "identity",
+      "allocation_use_layer_norm": true,
+      "eps": 1e-08,
+      "lambda_concentration": 0.0,
+      "lambda_drawdown": 0.03,
+      "lambda_turnover": 0.01,
+      "learning_rate": 0.0001,
+      "num_epochs": 50,
+      "simplex_activation": "sparsemax",
+      "transaction_cost_bps": 10.0
+    },
+    "enable_dpo": false,
+    "env": [
+      0.001,
+      0.2,
+      1.0,
+      0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -1,
+      null,
+      null,
+      null,
+      0.0,
+      0.0
+    ],
+    "periods_per_year": null,
+    "preprocessing": {
+      "clip_lower": null,
+      "clip_upper": null,
+      "fill_null_value": 0.0,
+      "preserve_rank_columns": true,
+      "rolling_window": 252,
+      "scale": true
+    },
+    "rebalance_frequency": "daily",
+    "risk": {
+      "adv_window": 20,
+      "beta_window": 126,
+      "covariance_method": "shrinkage",
+      "covariance_shrinkage": null,
+      "covariance_window": 126,
+      "drawdown_hard_limit": 0.2,
+      "drawdown_soft_limit": 0.1,
+      "enabled": false,
+      "eps": 1e-08,
+      "impact_coefficient": 0.0,
+      "lambda_intervention": 0.01,
+      "maximum_adv_participation": null,
+      "maximum_full_turnover": 0.5,
+      "maximum_position_weight": 0.2,
+      "minimum_cash_weight": 0.05,
+      "minimum_covariance_observations": 60,
+      "minimum_drawdown_risk_scale": 0.0,
+      "minimum_trade_weight": 0.001,
+      "spread_bps": 5.0,
+      "target_annual_volatility": 0.15,
+      "volatility_half_life": 20.0
+    },
+    "seed": 6,
+    "walk_forward": {
+      "step_years": 1,
+      "test_years": 1,
+      "train_years": 3
+    }
+  },
+  "created_at_utc": "2026-07-15T01:51:08Z",
+  "decision_end": "2026-07-10",
+  "decision_start": "2015-01-02",
+  "git_revision": "dfb5534a8bcf76a8222fa7b7057f3875ca5467e1",
+  "input_fingerprint": "0ea8a222993ffd7e4ec80f9b8d0b2856d2a58385a2f582feb704fade10947dbb",
+  "run_id": "1069f618bc4b5211",
+  "seed": 6,
+  "tickers": [
+    "GLD",
+    "MTUM",
+    "QQQ",
+    "XLE",
+    "XLK",
+    "XLV"
+  ]
+}
